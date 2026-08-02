@@ -116,11 +116,19 @@ void ds_monitor_run(struct ds_config *cfg, int sync_pipe_write) {
       sanitize_container_name(cfg->container_name, safe_name,
                               sizeof(safe_name));
 
-      /* v2: enable requested controllers top-down BEFORE mkdir.
+      /* v2: enable controllers top-down BEFORE mkdir.
+       *
+       * Do this even when no explicit resource limit was requested.  systemd
+       * needs delegated controllers to create init.scope/user.slice and to
+       * account processes.  The old condition only enabled them for
+       * --memory/--cpus/--pids-limit, so a normal systemd boot got an empty
+       * cgroup namespace on Android 4.4 and PID 1 immediately fell back or
+       * spun in its service executor.
+       *
        * Controllers only appear in a child cgroup if the parent's
        * subtree_control has them enabled first. Walk two levels:
        * /sys/fs/cgroup -> /sys/fs/cgroup/droidspaces */
-      if (cfg->memory_limit || cfg->cpu_quota || cfg->pids_limit) {
+      {
         /* Build enable string with snprintf offsets instead of strncat to
          * avoid truncation. Use ds_cg_word_in_list() for exact word-boundary
          * matching to prevent false positives (e.g. matching "cpuset"
@@ -130,7 +138,10 @@ void ds_monitor_run(struct ds_config *cfg, int sync_pipe_write) {
         int eoff = 0;
         if (read_file("/sys/fs/cgroup/cgroup.controllers", buf, sizeof(buf)) >
             0) {
-          if (cfg->memory_limit && ds_cg_word_in_list(buf, "memory")) {
+          /* memory and pids are required for systemd delegation even with
+           * unlimited/default limits.  The controller is only enabled when
+           * the 4.4 kernel actually advertises it. */
+          if (ds_cg_word_in_list(buf, "memory")) {
             int n = snprintf(enable + eoff, sizeof(enable) - (size_t)eoff,
                              "%s+memory", eoff ? " " : "");
             if (n > 0)
@@ -142,7 +153,7 @@ void ds_monitor_run(struct ds_config *cfg, int sync_pipe_write) {
             if (n > 0)
               eoff += n;
           }
-          if (cfg->pids_limit && ds_cg_word_in_list(buf, "pids")) {
+          if (ds_cg_word_in_list(buf, "pids")) {
             int n = snprintf(enable + eoff, sizeof(enable) - (size_t)eoff,
                              "%s+pids", eoff ? " " : "");
             if (n > 0)
