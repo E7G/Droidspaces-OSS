@@ -456,14 +456,34 @@ object ContainerManager {
             val quotedName = ContainerCommandBuilder.quote(containerName)
             val result = Shell.cmd("\"$binary\" --name=$quotedName pid 2>/dev/null").exec()
 
-            val output = result.out.firstOrNull()?.trim() ?: "NONE"
-            if (output == "NONE" || output.isEmpty()) {
-                return@withContext Pair(false, null)
-            }
-
-            val pid = output.toIntOrNull()
+            // Root shells may prepend diagnostics or ANSI control sequences. Parse
+            // every output line instead of trusting the first line.
+            val pid = result.out.asSequence()
+                .map { it.replace(ANSI_ESCAPE, "").trim() }
+                .mapNotNull { it.toIntOrNull() }
+                .firstOrNull { it > 0 }
             if (pid != null && pid > 0) {
                 return@withContext Pair(true, pid)
+            }
+
+            // Older backends and transient daemon restarts can return NONE even
+            // while the authoritative per-container pidfile is still valid.
+            // Validate both process liveness and the container boot marker before
+            // accepting this fallback, preventing stale/reused PIDs from showing
+            // as running.
+            val safeName = ContainerManager.sanitizeContainerName(containerName)
+            val pidFile = "${Constants.PIDS_BASE_PATH}/$safeName.pid"
+            val pidResult = Shell.cmd("cat ${ContainerCommandBuilder.quote(pidFile)} 2>/dev/null").exec()
+            val pidFromFile = pidResult.out.asSequence()
+                .map { it.trim() }
+                .mapNotNull { it.toIntOrNull() }
+                .firstOrNull { it > 0 }
+            if (pidFromFile != null) {
+                val marker = "/proc/$pidFromFile/root/run/droidspaces"
+                val alive = Shell.cmd("kill -0 $pidFromFile 2>/dev/null && test -e ${ContainerCommandBuilder.quote(marker)}").exec()
+                if (alive.isSuccess) {
+                    return@withContext Pair(true, pidFromFile)
+                }
             }
         } catch (e: Exception) {
             // Ignore errors - treat as stopped
@@ -471,6 +491,8 @@ object ContainerManager {
 
         Pair(false, null)
     }
+
+    private val ANSI_ESCAPE = Regex("\\u001B\\[[;\\d]*m")
 
     /**
      * Return the anland display-daemon socket path for a running container, or
