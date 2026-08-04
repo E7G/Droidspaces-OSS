@@ -23,12 +23,12 @@ jobs:
           set -euo pipefail
           sdkmanager "ndk;28.2.13676358"
           export NDK_BIN="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          test -x "$NDK_BIN/aarch64-linux-android21-clang"
+          test -x "$NDK_BIN/aarch64-linux-android28-clang"
           make clean
           make -j"$(nproc)" \
             OUT_DIR=output/android-aarch64 \
-            CC="$NDK_BIN/aarch64-linux-android21-clang" \
-            CFLAGS='-Wall -Wextra -Wpedantic -Werror -O2 -std=gnu99 -Isrc/include -pthread -DDS_ENABLE_SOCKETD_BACKEND=1' \
+            CC="$NDK_BIN/aarch64-linux-android28-clang" \
+            CFLAGS='-Wall -Wextra -Wpedantic -Werror -Wno-gnu-zero-variadic-macro-arguments -O2 -std=gnu99 -Isrc/include -pthread -DDS_ENABLE_SOCKETD_BACKEND=1' \
             LDFLAGS='-no-pie -pthread' \
             LIBS='' \
             NO_STRIP=1 \
