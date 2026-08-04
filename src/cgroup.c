@@ -17,15 +17,43 @@
 #define CGROUP2_SUPER_MAGIC 0x63677270
 #endif
 
-/* Returns 1 if the kernel's cgroupv2 controllers are sufficiently complete
- * for systemd. The cpu/io/memory v2 controllers only became usable in 5.2.
- * On kernels like Android 4.14, cgroup2 mounts SUCCEED but the controllers
- * are absent - systemd probes them and falls apart. */
+/* A cgroup2 mount alone is not enough for systemd. Android vendor kernels can
+ * expose the filesystem type while omitting the controller and delegation
+ * files that systemd needs. Probe the mounted hierarchy instead of guessing
+ * from the kernel release. */
 int ds_cgroup_v2_usable(void) {
-  int major = 0, minor = 0;
-  if (get_kernel_version(&major, &minor) != 0)
-    return 0; /* unknown kernel - assume unusable, safe default */
-  return (major > 5 || (major == 5 && minor >= 2));
+  const char *root = "sys/fs/cgroup";
+  const char *required[] = {
+      "cgroup.controllers", "cgroup.subtree_control", "cgroup.procs",
+      "cgroup.events"};
+  char path[PATH_MAX];
+  char controllers[4096];
+  FILE *f;
+
+  for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
+    snprintf(path, sizeof(path), "%s/%s", root, required[i]);
+    if (access(path, R_OK) != 0)
+      return 0;
+  }
+
+  snprintf(path, sizeof(path), "%s/cgroup.controllers", root);
+  f = fopen(path, "re");
+  if (!f)
+    return 0;
+  controllers[0] = '\0';
+  if (!fgets(controllers, sizeof(controllers), f)) {
+    fclose(f);
+    return 0;
+  }
+  fclose(f);
+
+  /* An empty controller list is the common incomplete Android cgroup2 case.
+   * It cannot provide systemd slices or delegated user managers. */
+  for (char *p = controllers; *p; p++) {
+    if (!isspace((unsigned char)*p))
+      return access("sys/fs/cgroup/cgroup.subtree_control", W_OK) == 0;
+  }
+  return 0;
 }
 
 /* Scan mountinfo for any host cgroup2 mount (e.g. /dev/cg2_bpf on Android).
@@ -209,12 +237,17 @@ int setup_cgroups(int is_systemd, int force_cgroupv1) {
     /* Always mount a fresh cgroup2 hierarchy within the container's
      * cgroup namespace. Isolation is handled by the kernel namespace. */
     if (mount("cgroup2", "sys/fs/cgroup", "cgroup2",
-              MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) == 0) {
+              MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) == 0 &&
+        ds_cgroup_v2_usable()) {
       systemd_setup_done = 1;
     } else {
-      ds_error("Failed to mount cgroup2: %s", strerror(errno));
+      ds_warn("cgroup2 is mounted but not systemd-usable; falling back to v1");
+      umount2("sys/fs/cgroup", MNT_DETACH);
+      v2_active = 0;
     }
-  } else {
+  }
+
+  if (!v2_active) {
     /* V1 PATH (force_cgroupv1): Synthesize fresh mounts for all controllers. */
     mount_v1_controllers();
     systemd_setup_done = 1; /* handled via systemd named cgroup below */

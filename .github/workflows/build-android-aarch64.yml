@@ -1,0 +1,49 @@
+name: Build Android aarch64 backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "ndk;28.2.13676358"
+          export NDK_BIN="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$NDK_BIN/aarch64-linux-android21-clang"
+          make clean
+          make -j"$(nproc)" \
+            OUT_DIR=output/android-aarch64 \
+            CC="$NDK_BIN/aarch64-linux-android21-clang" \
+            CFLAGS='-Wall -Wextra -Wpedantic -Werror -O2 -std=gnu99 -Isrc/include -pthread -DDS_ENABLE_SOCKETD_BACKEND=1' \
+            LDFLAGS='-no-pie -pthread' \
+            LIBS='' \
+            NO_STRIP=1 \
+            droidspaces
+          file output/android-aarch64/droidspaces
+          readelf -h output/android-aarch64/droidspaces | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          readelf -l output/android-aarch64/droidspaces | grep -F '/system/bin/linker64'
+          mkdir -p android-aarch64
+          cp output/android-aarch64/droidspaces android-aarch64/
+          sha256sum android-aarch64/droidspaces > android-aarch64/SHA256SUMS
+
+      - name: Upload backend
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidspaces-android-aarch64
+          path: android-aarch64/
+          if-no-files-found: error
+          retention-days: 14

@@ -602,6 +602,8 @@ int internal_boot(struct ds_config *cfg) {
         init_args[argc++] = (char *)"systemd.unified_cgroup_hierarchy=0";
         init_args[argc++] =
             (char *)"systemd.legacy_systemd_cgroup_controller=1";
+        if (setenv("SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE", "1", 1) < 0)
+          ds_warn("Failed to set systemd legacy cgroup compatibility mode");
       }
     }
     /* statfs failure → leave systemd to probe on its own */
