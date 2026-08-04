@@ -28,13 +28,13 @@ jobs:
           make -j"$(nproc)" \
             OUT_DIR=output/android-aarch64 \
             CC="$NDK_BIN/aarch64-linux-android28-clang" \
-            CFLAGS='-Wall -Wextra -Wpedantic -Werror -Wno-gnu-zero-variadic-macro-arguments -O2 -std=gnu99 -Isrc/include -pthread -DDS_ENABLE_SOCKETD_BACKEND=1' \
-            LDFLAGS='-no-pie -pthread' \
+            CFLAGS='-Wall -Wextra -Wpedantic -Werror -Wno-gnu-zero-variadic-macro-arguments -O2 -std=gnu99 -Isrc/include -pthread -fPIE -DDS_ENABLE_SOCKETD_BACKEND=1' \
+            LDFLAGS='-pie -pthread' \
             LIBS='' \
             NO_STRIP=1 \
             droidspaces
           file output/android-aarch64/droidspaces
-          readelf -h output/android-aarch64/droidspaces | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          readelf -h output/android-aarch64/droidspaces | grep -E 'Class:.*ELF64|Machine:.*AArch64|Type:.*DYN'
           readelf -l output/android-aarch64/droidspaces | grep -F '/system/bin/linker64'
           mkdir -p android-aarch64
           cp output/android-aarch64/droidspaces android-aarch64/
