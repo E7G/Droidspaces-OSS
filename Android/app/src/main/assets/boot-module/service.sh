@@ -84,8 +84,10 @@ done
 
 # Apply correct SELinux context to rootfs images
 log "Applying SELinux context to rootfs images..."
-${BUSYBOX_BINARY} find "${CONTAINERS_DIR}" -name "*.img" \
-    -exec chcon u:object_r:vold_data_file:s0 {} + 2>/dev/null
+for image in "${CONTAINERS_DIR}"/*/*.img; do
+    [ -f "${image}" ] || continue
+    chcon u:object_r:vold_data_file:s0 "${image}" 2>/dev/null
+done
 
 # Wait for full boot
 log "Waiting for boot to complete..."
@@ -173,7 +175,8 @@ get_cfg_val() {
 
 # Find the container.config whose name= matches $1 (echoes path, empty if none)
 cfg_for_name() {
-    for c in $(${BUSYBOX_BINARY} find "${CONTAINERS_DIR}" -name "container.config" 2>/dev/null); do
+    for c in "${CONTAINERS_DIR}"/*/container.config; do
+        [ -f "${c}" ] || continue
         n=$(get_cfg_val name "$c")
         [ -n "$n" ] || n=$(${BUSYBOX_BINARY} basename "$(${BUSYBOX_BINARY} dirname "$c")")
         if [ "$n" = "$1" ]; then
@@ -204,7 +207,7 @@ boot_container() {
 }
 
 # Build the boot table: PRIORITY \t NAME \t NET_MODE \t GATEWAY \t CFG
-for cfg in $(${BUSYBOX_BINARY} find "${CONTAINERS_DIR}" -name "container.config" 2>/dev/null); do
+for cfg in "${CONTAINERS_DIR}"/*/container.config; do
     [ -f "${cfg}" ] || continue
     [ "$(get_cfg_val run_at_boot "${cfg}")" = "1" ] || continue
 
