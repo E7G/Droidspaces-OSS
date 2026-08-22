@@ -30,7 +30,7 @@ Unlike the Termux:X11 path, Anland is designed for Wayland compositor workflows.
 Before configuring Anland, make sure the following requirements are met:
 
 1. **An Android device that supports Droidspaces**: Anland works together with Droidspaces and requires `Anland Display` to be enabled in the container configuration.
-2. **An Anland-supported display backend**: The compositor backend must be patched for Anland. `KWin` is the main supported backend. See the [Anland producers directory](https://github.com/superturtlee/anland/tree/main/producers) for available backends.
+2. **An Anland-supported display backend**: The compositor backend must be patched for Anland. `KWin` is the main supported backend. See the [Anland producers directory](https://github.com/E7G/anland/tree/main/producers) for available backends.
 3. **A Qualcomm Snapdragon / Adreno device is recommended**: Anland depends heavily on device-side GPU and buffer-sharing behavior, and Qualcomm platforms usually provide better compatibility.
 
 > [!NOTE]
@@ -56,7 +56,7 @@ Use this method if you want to choose a specific desktop environment, target dis
 2. **Clone the Anland source code.**
 
    ```bash
-   git clone https://github.com/superturtlee/anland.git
+   git clone https://github.com/E7G/anland.git
    ```
 
 3. **Choose the matching desktop environment and distribution under the `producers` directory.**
@@ -109,7 +109,7 @@ Project: [Droidspaces-rootfs-KDE-builder](https://github.com/Goldzxcbug/Droidspa
 
 ## Step 2: Install the Anland App
 
-1. Download the **Anland APK** from the [latest Anland release](https://github.com/superturtlee/anland/releases/latest).
+1. Download the **Anland APK** from the [latest Anland release](https://github.com/E7G/anland/releases/latest).
 2. Install the APK on your Android device.
 3. Grant **root permission** to Anland on first launch.
 
