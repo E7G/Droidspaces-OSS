@@ -49,6 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.rememberCoroutineScope
 import com.droidspaces.app.ui.util.showSuccess
+import com.droidspaces.app.ui.util.LoadingIndicator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,7 +63,7 @@ fun RequirementsScreen(
     // was nuked after the last check elsewhere.
     LaunchedEffect(Unit) { appStateViewModel.checkBackendStatus(force = true) }
     // The check runs the droidspaces binary, so it's only meaningful when the
-    // backend is actually usable — gate the button on that (see test plan §2).
+    // backend is actually usable, so gate the button on that (see test plan §2).
     val backendReady = appStateViewModel.backendStatus == DroidspacesBackendStatus.Available ||
         appStateViewModel.backendStatus == DroidspacesBackendStatus.UpdateAvailable
     val scope = rememberCoroutineScope()
@@ -240,7 +241,7 @@ CONFIG_TMPFS_XATTR=y""",
                     snackbarHostState = snackbarHostState
                 )
 
-                // Check Requirements Button — disabled without root or a usable backend.
+                // Check Requirements Button, disabled without root or a usable backend.
                 CheckRequirementsButton(
                     enabled = isRootAvailable && backendReady,
                     isRunning = isCheckRunning,
@@ -522,9 +523,8 @@ private fun CheckRequirementsButton(
             horizontalArrangement = Arrangement.Center
         ) {
             if (isRunning) {
-                CircularProgressIndicator(
+                LoadingIndicator(
                     modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.dp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
             } else {

@@ -25,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -41,6 +42,9 @@ import com.droidspaces.app.ui.terminal.virtualkeys.VirtualKeysListener
 import com.droidspaces.app.ui.terminal.virtualkeys.VirtualKeysView
 import com.droidspaces.app.util.AnimationUtils
 import com.droidspaces.app.util.ContainerOSInfoManager
+import com.droidspaces.app.util.PreferencesManager
+import com.droidspaces.app.ui.util.LoadingIndicator
+import com.droidspaces.app.ui.util.LoadingSize
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalView
 import java.lang.ref.WeakReference
@@ -64,6 +68,7 @@ fun ContainerTerminalScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val terminalDarkTheme = remember { PreferencesManager.getInstance(context).terminalDarkTheme }
 
     val keyboardController = LocalSoftwareKeyboardController.current
     var binder by remember { mutableStateOf<TerminalSessionService.SessionBinder?>(null) }
@@ -78,7 +83,7 @@ fun ContainerTerminalScreen(
         context.bindService(Intent(context, TerminalSessionService::class.java), conn, Context.BIND_AUTO_CREATE)
         onDispose {
             // Detach the UI client from any backgrounded sessions before unbinding so
-            // the service doesn't retain this Activity/TerminalView (VULN V16). The
+            // the service doesn't retain this Activity/TerminalView. The
             // screen re-attaches its own client on re-entry.
             binder?.detachAllClients()
             context.unbindService(conn)
@@ -275,11 +280,11 @@ fun ContainerTerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = paddingValues.calculateTopPadding())
-                .background(MaterialTheme.colorScheme.surface)
+                .background(if (terminalDarkTheme) Color.Black else MaterialTheme.colorScheme.surface)
         ) {
             if (binder == null || tabs.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    LoadingIndicator(size = LoadingSize.Medium)
                 }
             } else {
                 tabs.forEach { tab ->
@@ -313,10 +318,25 @@ private fun TerminalTabView(
     val density = LocalDensity.current
     val defaultFontSizePx = remember { with(density) { 10.dp.roundToPx() } }
     val fontSizePx = TerminalSessionService.globalSessionList[tab.id]?.fontSizePx ?: defaultFontSizePx
-    val onSurfaceColor = MaterialTheme.colorScheme.onSurface.toArgb()
     // Loaded once per composition - null = bundled font missing, fallback to system default
     val context = androidx.compose.ui.platform.LocalContext.current
     val terminalTypeface = remember { ResourcesCompat.getFont(context, R.font.jetbrains_mono) }
+
+    // Terminal-only dark mode: renders the terminal page dark even when the rest
+    // of the app follows the light theme. Read once at entry; re-enter to apply.
+    val terminalDarkTheme = remember {
+        PreferencesManager.getInstance(context).terminalDarkTheme
+    }
+    // Termux TerminalColors indices: 256 = default foreground, 257 = background,
+    // 258 = cursor. Dark mode uses the classic termux white-on-black scheme:
+    // pure white foreground on pure black background.
+    val terminalForeground = if (terminalDarkTheme) Color.White.toArgb() else MaterialTheme.colorScheme.onSurface.toArgb()
+    // Only dark mode explicitly overrides the full-screen background (View paint)
+    // and the default background color (index 257). In light mode we keep the
+    // pre-PR behavior: the Activity background shows through and the Termux
+    // default background color is left untouched.
+    val terminalBackground = if (terminalDarkTheme) Color.Black.toArgb() else 0
+    val virtualKeysBackground = if (terminalDarkTheme) Color(0xFF1A1A1E) else MaterialTheme.colorScheme.surfaceContainerHighest
 
     AnimatedVisibility(
         visible = isVisible,
@@ -330,10 +350,15 @@ private fun TerminalTabView(
                 factory = { ctx ->
                     TerminalView(ctx, null).apply {
                         TerminalScreenState.terminalView = WeakReference(this)
-                        setTextSize(fontSizePx)      // must run first — initializes mRenderer
+                        setTextSize(fontSizePx)      // must run first, initializes mRenderer
                         setTypeface(terminalTypeface) // JetBrains Mono; null = system default
                         keepScreenOn = true
                         isFocusableInTouchMode = true
+                        // The renderer only paints cell backgrounds; the full-screen
+                        // default background comes from the View itself.
+                        if (terminalDarkTheme) {
+                            setBackgroundColor(terminalBackground)
+                        }
 
                         if (activity != null) {
                             val client = TerminalBackEnd(
@@ -361,9 +386,13 @@ private fun TerminalTabView(
 
                         post {
                             requestFocus()
+                            (mClient as? TerminalBackEnd)?.activate12KeyInputMethodIfNeeded()
                             mEmulator?.mColors?.mCurrentColors?.apply {
-                                set(256, onSurfaceColor)
-                                set(258, onSurfaceColor)
+                                set(256, terminalForeground)
+                                set(258, terminalForeground)
+                                if (terminalDarkTheme) {
+                                    set(257, terminalBackground)
+                                }
                             }
                         }
                     }
@@ -385,7 +414,7 @@ private fun TerminalTabView(
                     VirtualKeysView(ctx, null).apply {
                         TerminalScreenState.virtualKeysView = WeakReference(this)
                         binder.getSession(tab.id)?.let { virtualKeysViewClient = VirtualKeysListener(it) }
-                        buttonTextColor = onSurfaceColor
+                        buttonTextColor = terminalForeground
                         try {
                             reload(VirtualKeysInfo(VIRTUAL_KEYS_LAYOUT, "", VirtualKeysConstants.CONTROL_CHARS_ALIASES))
                         } catch (e: Exception) {
@@ -396,12 +425,13 @@ private fun TerminalTabView(
                 update = { vkv ->
                     if (isVisible) {
                         TerminalScreenState.virtualKeysView = WeakReference(vkv)
+                        vkv.buttonTextColor = terminalForeground
                         binder.getSession(tab.id)?.let { vkv.virtualKeysViewClient = VirtualKeysListener(it) }
                     }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .background(virtualKeysBackground)
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
                     .height(64.dp)
             )

@@ -7,13 +7,11 @@
 
 #include "droidspace.h"
 
-/* ---------------------------------------------------------------------------
- * External Command Lock - CLI-only ownership
+/* External Command Lock - CLI-only ownership
  *
  * The lock represents exactly ONE thing: an external CLI command is actively
  * managing this container. ONLY the CLI parent creates/removes locks.
- * The monitor is READ-ONLY for locks.
- * ---------------------------------------------------------------------------*/
+ * The monitor is READ-ONLY for locks. */
 
 /* Build lock path with defensive truncation.
  * Precision: 2048 (pids_dir) + 256 (name) + 5 (.lock) = 2309 < PATH_MAX (4096)
@@ -30,6 +28,29 @@ static int get_lock_path(const char *name, char *buf, size_t size) {
   return (r > 0 && (size_t)r < size) ? 0 : -1;
 }
 
+/* A valid lock is exactly "pid boot-id" where the boot ID matches the
+ * running kernel and the PID is alive. Anything else is stale, including
+ * the pid-only format from older versions: a bare PID cannot be told apart
+ * from post-reboot PID reuse, which is how a stranded lock bricked a
+ * container in PR #286. Returns the live holder PID, or 0 if stale.
+ * Same-boot PID reuse (a full pid_max wrap while a lock is held) is not
+ * covered; add a starttime compare if that ever shows up in the wild. */
+static pid_t lock_holder_if_alive(char *buf) {
+  char *sp = strchr(buf, ' ');
+  if (!sp)
+    return 0;
+  *sp = '\0';
+
+  char boot_id[64];
+  if (read_file("/proc/sys/kernel/random/boot_id", boot_id, sizeof(boot_id)) <=
+          0 ||
+      strcmp(sp + 1, boot_id) != 0)
+    return 0;
+
+  pid_t pid = (pid_t)atoi(buf);
+  return (pid > 0 && kill(pid, 0) == 0) ? pid : 0;
+}
+
 /* Create external command lock - ONLY called by CLI parent.
  * Returns: 0 on success, -1 if lock already held by a live process. */
 static int acquire_external_lock(const char *name) {
@@ -40,27 +61,29 @@ static int acquire_external_lock(const char *name) {
   /* Check if lock already exists */
   if (access(lock_path, F_OK) == 0) {
     /* Lock exists - verify if holder is still alive */
-    char buf[32];
+    char buf[64];
     if (read_file(lock_path, buf, sizeof(buf)) > 0) {
-      pid_t holder = (pid_t)atoi(buf);
-      if (holder > 0 && holder != getpid() && kill(holder, 0) == 0) {
+      pid_t holder = lock_holder_if_alive(buf);
+      if (holder > 0 && holder != getpid()) {
         /* Lock holder is alive and NOT us - cannot acquire */
         ds_warn("Cannot acquire lock: held by process %d", holder);
         return -1;
       }
-      /* Stale lock detected */
-      if (holder > 0 && holder != getpid()) {
-        ds_log("Removing stale lock (holder PID %d is dead)", holder);
-      }
+      if (holder == 0)
+        ds_log("[DEBUG] Removing stale or malformed lock (recorded PID %d)",
+               atoi(buf));
     }
     /* Remove stale lock */
     unlink(lock_path);
   }
 
-  /* Write our PID to lock file */
-  char pid_str[32];
-  snprintf(pid_str, sizeof(pid_str), "%d", getpid());
-  return write_file_atomic(lock_path, pid_str);
+  /* Stamp the lock with our PID and the boot ID. Older versions atoi() the
+   * file, which stops at the space, so they still read the leading PID. */
+  char lock_str[96];
+  char boot_id[64] = "";
+  read_file("/proc/sys/kernel/random/boot_id", boot_id, sizeof(boot_id));
+  snprintf(lock_str, sizeof(lock_str), "%d %s", getpid(), boot_id);
+  return write_file_atomic(lock_path, lock_str);
 }
 
 /* Release external command lock - ONLY called by CLI parent.
@@ -71,7 +94,7 @@ static void release_external_lock(const char *name) {
     return;
 
   /* Verify we own the lock before removing */
-  char buf[32];
+  char buf[64];
   if (read_file(lock_path, buf, sizeof(buf)) > 0) {
     pid_t holder = (pid_t)atoi(buf);
     if (holder == getpid()) {
@@ -84,9 +107,7 @@ static void release_external_lock(const char *name) {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Configuration & Metadata Recovery
- * ---------------------------------------------------------------------------*/
+/* Configuration & Metadata Recovery */
 
 /**
  * Enhanced config loader that performs a global /proc scan if host metadata
@@ -126,15 +147,14 @@ int is_external_lock_active(const char *name) {
     return 0; /* No lock */
 
   /* Lock exists - verify holder is alive */
-  char buf[32];
+  char buf[64];
   if (read_file(lock_path, buf, sizeof(buf)) > 0) {
-    pid_t holder = (pid_t)atoi(buf);
-    if (holder > 0 && kill(holder, 0) == 0)
+    if (lock_holder_if_alive(buf) > 0)
       return 1; /* Valid lock */
 
     /* Stale lock detected */
-    write_monitor_debug_log(name, "Removing stale lock (holder PID %d is dead)",
-                            holder);
+    write_monitor_debug_log(
+        name, "Removing stale or malformed lock (recorded PID %d)", atoi(buf));
   }
 
   /* Remove stale lock */
@@ -142,9 +162,7 @@ int is_external_lock_active(const char *name) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Cleanup
- * ---------------------------------------------------------------------------*/
+/* Cleanup */
 
 /* Poll for a socket path to appear, bailing early if the server process dies.
  * Returns 0 on socket ready, -1 on server death or timeout. */
@@ -184,6 +202,7 @@ void cleanup_container_resources(struct ds_config *cfg, pid_t pid,
     ds_x11_daemon_stop(cfg);
     ds_virgl_daemon_stop(cfg);
     ds_pulse_daemon_stop(cfg);
+    ds_anland_daemon_stop(cfg);
     if (count_running_containers(NULL, 0) == 0) {
       android_optimizations(0);
     }
@@ -279,9 +298,7 @@ void cleanup_container_resources(struct ds_config *cfg, pid_t pid,
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Introspection
- * ---------------------------------------------------------------------------*/
+/* Introspection */
 
 int is_valid_container_pid(pid_t pid) {
   char path[PATH_MAX];
@@ -304,9 +321,7 @@ int is_valid_container_pid(pid_t pid) {
   return 1;
 }
 
-/* ---------------------------------------------------------------------------
- * Start
- * ---------------------------------------------------------------------------*/
+/* Start */
 
 int start_rootfs(struct ds_config *cfg) {
 
@@ -499,6 +514,14 @@ int start_rootfs(struct ds_config *cfg) {
 
   if (is_android() && cfg->pulseaudio) {
     ds_pulse_daemon_start(cfg);
+  }
+
+  /* anland display daemon: generate the per-container host socket and start the
+   * broker before fork so the socket exists when bind-mounted post-pivot. The
+   * generated cfg->anland_sock is recorded in the Pids dir (not
+   * container.config) by ds_anland_daemon_start. */
+  if (is_android() && cfg->anland) {
+    ds_anland_daemon_start(cfg);
   }
 
   /* 3. Early pre-flight for volatile mode (before any host changes) */
@@ -981,9 +1004,7 @@ int stop_rootfs(struct ds_config *cfg, int skip_unmount) {
   return stop_rootfs_with_timeout(cfg, skip_unmount, DS_STOP_TIMEOUT);
 }
 
-/* ---------------------------------------------------------------------------
- * Namespace Entry (shared for enter and run)
- * ---------------------------------------------------------------------------*/
+/* Namespace Entry (shared for enter and run) */
 
 int enter_namespace(pid_t pid, struct ds_config *cfg) {
   /* Verify process is still alive before trying to enter namespaces */
@@ -1046,9 +1067,7 @@ int enter_namespace(pid_t pid, struct ds_config *cfg) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Enter / Run
- * ---------------------------------------------------------------------------*/
+/* Enter / Run */
 
 int enter_rootfs(struct ds_config *cfg, const char *user) {
   pid_t pid = 0;
@@ -1127,6 +1146,10 @@ int enter_rootfs(struct ds_config *cfg, const char *user) {
      * inherited only via fork/exec from PID 1 - entering processes arrive via
      * setns() and are NOT children of init, so they inherit nothing. */
     ds_log_silent = 1;
+    /* Neutralize the KSU container-escape path BEFORE seccomp is applied:
+     * the ioctl needs the [ksu_driver] fd that the magic reboot() installs,
+     * and the seccomp filter below denies that very magic reboot. */
+    ds_ksu_neutralize_root_escape();
     ds_seccomp_apply_minimal(cfg->privileged_mask, cfg->userns_allowed);
     android_seccomp_setup(
         0, cfg->block_nested_ns && !(cfg->privileged_mask & DS_PRIV_NOSEC),
@@ -1134,9 +1157,8 @@ int enter_rootfs(struct ds_config *cfg, const char *user) {
     ds_apply_capability_hardening(cfg->hw_access, cfg->privileged_mask);
     ds_log_silent = 0;
 
-    /* ---------------------------------------------------------------
-     * LXC-STYLE SESSION SETUP - intermediate becomes session leader
-     * ---------------------------------------------------------------
+    /* LXC-STYLE SESSION SETUP - intermediate becomes session leader
+     *
      * Ubuntu 24.04+ login (util-linux) calls vhangup() as part of its
      * "secure login" sequence: hang up the old session, reopen the
      * terminal fresh, then setsid()+TIOCSCTTY to own it.
@@ -1345,6 +1367,10 @@ int run_in_rootfs(struct ds_config *cfg, int argc, char **argv,
     /* Apply identical security hardening as internal_boot() and enter_rootfs().
      * Same reasoning: run processes are not children of container PID 1. */
     ds_log_silent = 1;
+    /* Neutralize the KSU container-escape path BEFORE seccomp is applied:
+     * the ioctl needs the [ksu_driver] fd that the magic reboot() installs,
+     * and the seccomp filter below denies that very magic reboot. */
+    ds_ksu_neutralize_root_escape();
     ds_seccomp_apply_minimal(cfg->privileged_mask, cfg->userns_allowed);
     android_seccomp_setup(
         0, cfg->block_nested_ns && !(cfg->privileged_mask & DS_PRIV_NOSEC),
@@ -1429,9 +1455,7 @@ int run_in_rootfs(struct ds_config *cfg, int argc, char **argv,
   return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-/* ---------------------------------------------------------------------------
- * Other operations
- * ---------------------------------------------------------------------------*/
+/* Other operations */
 
 static const char *get_architecture(void) {
   static struct utsname uts;
@@ -1638,6 +1662,9 @@ int show_info(struct ds_config *cfg, int trust_cfg_pid) {
     if (is_android()) {
       printf("PULSEAUDIO=%d\n", cfg->pulseaudio);
     }
+    if (is_android()) {
+      printf("ANLAND=%d\n", cfg->anland);
+    }
 
     if (access("/sys/fs/selinux/enforce", R_OK) == 0) {
       printf("SELINUX=%s\n",
@@ -1837,6 +1864,12 @@ int show_info(struct ds_config *cfg, int trust_cfg_pid) {
     /* 9. PulseAudio */
     if (is_android() && cfg->pulseaudio) {
       printf("  PulseAudio: enabled\n");
+      feat_count++;
+    }
+
+    /* 9b. Anland */
+    if (is_android() && cfg->anland) {
+      printf("  Anland: enabled\n");
       feat_count++;
     }
 

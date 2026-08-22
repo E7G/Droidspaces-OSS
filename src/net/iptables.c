@@ -28,9 +28,7 @@
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter_ipv4/ip_tables.h>
 
-/* ---------------------------------------------------------------------------
- * CIDR helper - shared with network.c via the public header
- * ---------------------------------------------------------------------------*/
+/* CIDR helper - shared with network.c via the public header */
 
 void parse_cidr(const char *cidr, uint32_t *ip_out, uint32_t *mask_out) {
   char buf[64];
@@ -51,9 +49,7 @@ void parse_cidr(const char *cidr, uint32_t *ip_out, uint32_t *mask_out) {
   *mask_out = (prefix == 0) ? 0u : htonl(0xffffffffu << (32 - prefix));
 }
 
-/* ---------------------------------------------------------------------------
- * Module loader - best-effort, harmless on built-in or absent modprobe
- * ---------------------------------------------------------------------------*/
+/* Module loader - best-effort, harmless on built-in or absent modprobe */
 
 static int modules_probed = 0;
 
@@ -76,15 +72,13 @@ static void probe_iptables_modules(void) {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: get table info + entries blob via getsockopt
+/* Internal: get table info + entries blob via getsockopt
  *
  * Returns 0 on success.  *entries_out points to the allocated
  * ipt_get_entries struct; caller frees it.
  *
  * Convenience macro: ENTRIES_BLOB(base) → pointer to the raw rule bytes
- * inside the ipt_get_entries allocation.
- * ---------------------------------------------------------------------------*/
+ * inside the ipt_get_entries allocation. */
 
 static int get_table(int fd, const char *table_name, struct ipt_getinfo *info,
                      unsigned char **entries_out) {
@@ -189,11 +183,9 @@ static const char *target_label(const struct xt_entry_target *t) {
   return "standard";
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: walk the blob to find an existing rule matching our fingerprint.
+/* Internal: walk the blob to find an existing rule matching our fingerprint.
  *
- * All non-NULL/non-zero criteria must match simultaneously.
- * ---------------------------------------------------------------------------*/
+ * All non-NULL/non-zero criteria must match simultaneously. */
 
 static int rule_exists_in_hook(const struct ipt_getinfo *info,
                                const unsigned char *blob, unsigned int hook_id,
@@ -246,13 +238,11 @@ static int rule_exists_in_hook(const struct ipt_getinfo *info,
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: fixup_jump_targets
+/* Internal: fixup_jump_targets
  *
  * After inserting new_rule_sz bytes at insert_off, any xt_standard_target
  * with a positive verdict (= absolute byte offset = chain jump) that pointed
- * to an entry AT OR AFTER insert_off must be incremented by new_rule_sz.
- * ---------------------------------------------------------------------------*/
+ * to an entry AT OR AFTER insert_off must be incremented by new_rule_sz. */
 
 static void fixup_jump_targets(unsigned char *blob, unsigned int blob_sz,
                                unsigned int insert_off, unsigned int delta) {
@@ -282,8 +272,7 @@ static void fixup_jump_targets(unsigned char *blob, unsigned int blob_sz,
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: fixup_jump_targets_removed
+/* Internal: fixup_jump_targets_removed
  *
  * Removal twin of fixup_jump_targets.  After rules are deleted the surviving
  * entries shift to lower offsets, but every xt_standard_target with a
@@ -292,8 +281,7 @@ static void fixup_jump_targets(unsigned char *blob, unsigned int blob_sz,
  * old_offsets[k] gives an entry's old start, removed_before[k] the bytes
  * removed before it.  Without this the kernel's mark_source_chains() validator
  * can no longer resolve the shifted jump (xt_find_jump_offset fails) and
- * rejects the whole table replace with ELOOP.
- * ---------------------------------------------------------------------------*/
+ * rejects the whole table replace with ELOOP. */
 
 static void fixup_jump_targets_removed(unsigned char *blob,
                                        unsigned int blob_sz,
@@ -334,11 +322,9 @@ static void fixup_jump_targets_removed(unsigned char *blob,
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: insert_rule_at_hook
+/* Internal: insert_rule_at_hook
  *
- * Inserts new_rule at the very beginning of the given hook's chain.
- * ---------------------------------------------------------------------------*/
+ * Inserts new_rule at the very beginning of the given hook's chain. */
 
 static int insert_rule_at_hook(int fd, const char *table_name,
                                struct ipt_getinfo *info_in,
@@ -443,7 +429,7 @@ static int insert_rule_at_hook(int fd, const char *table_name,
       break;
 
     if (err == EAGAIN && max_retries > 0) {
-      ds_log("[IPT]   EAGAIN (attempt remaining=%d) — refetching '%s' table",
+      ds_log("[IPT]   EAGAIN (attempt remaining=%d), refetching '%s' table",
              max_retries, table_name);
       usleep(5000 + 10000 * (4 - max_retries)); /* 5 / 15 / 25 / 35 ms */
 
@@ -456,7 +442,7 @@ static int insert_rule_at_hook(int fd, const char *table_name,
       struct ipt_getinfo new_info;
       unsigned char *new_base = NULL;
       if (get_table(fd, table_name, &new_info, &new_base) < 0) {
-        ds_log("[IPT]   refetch of '%s' failed — giving up", table_name);
+        ds_log("[IPT]   refetch of '%s' failed, giving up", table_name);
         ret = -1;
         err = EAGAIN;
         break;
@@ -483,14 +469,12 @@ static int insert_rule_at_hook(int fd, const char *table_name,
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: remove_matching_rules
+/* Internal: remove_matching_rules
  *
  * Builds a new blob that omits every entry matching any of our fingerprints,
  * then submits it atomically via IPT_SO_SET_REPLACE.
  *
- * Two-pass algorithm avoids in-place mutation of the blob being walked.
- * ---------------------------------------------------------------------------*/
+ * Two-pass algorithm avoids in-place mutation of the blob being walked. */
 
 static int remove_matching_rules(int fd, const char *table_name,
                                  struct ipt_getinfo *info_in,
@@ -710,7 +694,7 @@ static int remove_matching_rules(int fd, const char *table_name,
       break;
 
     if (err == EAGAIN && max_retries > 0) {
-      ds_log("[IPT] remove: EAGAIN (attempt remaining=%d) — refetching '%s'",
+      ds_log("[IPT] remove: EAGAIN (attempt remaining=%d), refetching '%s'",
              max_retries, table_name);
       usleep(5000 + 10000 * (4 - max_retries));
 
@@ -722,7 +706,7 @@ static int remove_matching_rules(int fd, const char *table_name,
       struct ipt_getinfo new_info;
       unsigned char *new_base = NULL;
       if (get_table(fd, table_name, &new_info, &new_base) < 0) {
-        ds_log("[IPT] remove: refetch of '%s' failed — giving up", table_name);
+        ds_log("[IPT] remove: refetch of '%s' failed, giving up", table_name);
         ret = -1;
         err = EAGAIN;
         break;
@@ -747,9 +731,7 @@ static int remove_matching_rules(int fd, const char *table_name,
   return (ret < 0) ? -err : 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: open a raw socket (shared across public APIs)
- * ---------------------------------------------------------------------------*/
+/* Internal: open a raw socket (shared across public APIs) */
 
 static int should_use_raw_api(void) {
   if (is_android())
@@ -780,11 +762,105 @@ static int open_raw_socket(void) {
   return fd;
 }
 
-/* ---------------------------------------------------------------------------
- * Public API: ds_ipt_ensure_masquerade
+/* Public API: ds_ipt_host_rules_present
  *
- * Inserts: -t nat -I POSTROUTING 1 -s <cidr> ! -d <cidr> -j MASQUERADE
- * ---------------------------------------------------------------------------*/
+ * Fork-free probe for the whole host-side rule set:
+ *   filter INPUT       -i <iface> ACCEPT
+ *   filter FORWARD     -i <iface> ACCEPT
+ *   filter FORWARD     -o <iface> ACCEPT
+ *   nat    POSTROUTING -s <cidr> ! -d <cidr> MASQUERADE
+ *   nat    PREROUTING  DNAT                     (only if expect_dnat)
+ *   mangle POSTROUTING TCPMSS
+ *
+ * The route monitor polls this as its "have our rules been removed?" signal,
+ * so it must stay cheap: one getsockopt pair per table, no iptables binary.
+ * Checking every rule rather than one canary matters because a netd restart is
+ * not the only thing that removes them - firewall apps rewrite the filter
+ * chains while leaving nat's MASQUERADE untouched, which a MASQUERADE-only
+ * probe would never notice.
+ *
+ * Two deliberate limits, both bounded by what the entry blob exposes without
+ * parsing xt match payloads:
+ *   - The DNAT and TCPMSS checks match on target name, so they prove that
+ *     port forwarding / MSS clamping is still installed, not that every
+ *     individual --port mapping is.  A single mapping deleted on its own is
+ *     not detected; anything that removes them as a group is.
+ *   - An unreadable mangle table is not treated as failure.  MSS clamping is
+ *     an MTU guard rather than connectivity, and failing the whole probe there
+ *     would stop us reconciling the rules that do matter.
+ *
+ * Returns 1 when all of them are present, 0 when any is missing, and -1 when
+ * the filter or nat table could not be read.  Callers must treat -1 as
+ * "unknown" and do nothing: the binary fallback paths have no idempotency
+ * check, so blindly reinstalling on an unreadable table would stack duplicate
+ * rules. */
+
+int ds_ipt_host_rules_present(const char *iface, const char *src_cidr,
+                              int expect_dnat) {
+  if (!should_use_raw_api())
+    return -1;
+
+  int fd = open_raw_socket();
+  if (fd < 0)
+    return -1;
+
+  struct ipt_getinfo info;
+  unsigned char *base = NULL;
+
+  /* filter: the three iface ACCEPT rules, in one table read. */
+  if (get_table(fd, "filter", &info, &base) < 0) {
+    close(fd);
+    return -1;
+  }
+  int present = rule_exists_in_hook(&info, ENTRIES_BLOB(base), NF_INET_LOCAL_IN,
+                                    iface, NULL, 0, 0, "ACCEPT") &&
+                rule_exists_in_hook(&info, ENTRIES_BLOB(base), NF_INET_FORWARD,
+                                    iface, NULL, 0, 0, "ACCEPT") &&
+                rule_exists_in_hook(&info, ENTRIES_BLOB(base), NF_INET_FORWARD,
+                                    NULL, iface, 0, 0, "ACCEPT");
+  free(base);
+
+  /* nat: MASQUERADE, plus a port-forward DNAT when --port is configured.
+   * Skipped once something is already known missing - the caller reinstalls
+   * the full set either way. */
+  if (present) {
+    uint32_t src_ip, src_mask;
+    parse_cidr(src_cidr, &src_ip, &src_mask);
+
+    base = NULL;
+    if (get_table(fd, "nat", &info, &base) < 0) {
+      close(fd);
+      return -1;
+    }
+    present =
+        rule_exists_in_hook(&info, ENTRIES_BLOB(base), NF_INET_POST_ROUTING,
+                            NULL, NULL, src_ip, src_mask, "MASQUERADE");
+    if (present && expect_dnat)
+      present =
+          rule_exists_in_hook(&info, ENTRIES_BLOB(base), NF_INET_PRE_ROUTING,
+                              NULL, NULL, 0, 0, "DNAT");
+    free(base);
+  }
+
+  /* mangle: the MSS clamp.  An unreadable mangle table leaves the verdict
+   * untouched rather than failing the probe - see the header comment. */
+  if (present) {
+    base = NULL;
+    if (get_table(fd, "mangle", &info, &base) == 0) {
+      present =
+          rule_exists_in_hook(&info, ENTRIES_BLOB(base), NF_INET_POST_ROUTING,
+                              NULL, NULL, 0, 0, "TCPMSS");
+      free(base);
+    }
+  }
+
+  close(fd);
+  return present ? 1 : 0;
+}
+
+/* Public API: ds_ipt_ensure_masquerade
+ *
+ * Inserts: -t nat -I POSTROUTING 1 -s <cidr> ! -d <cidr> -j MASQUERADE */
 
 int ds_ipt_ensure_masquerade(const char *src_cidr) {
   ds_log("[IPT] ensure_masquerade: cidr=%s", src_cidr);
@@ -882,8 +958,7 @@ binary_fallback_masq:
   return run_command_quiet(argv);
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: insert_iface_accept
+/* Internal: insert_iface_accept
  *
  * Insert "-I <chain> 1 [-i|-o] <iface> -j ACCEPT" into the filter table,
  * idempotently, via the raw socket API with a per-rule binary fallback.
@@ -891,8 +966,7 @@ binary_fallback_masq:
  * (iniface).  Returns 0 when the rule is present (inserted, already there, or
  * added via the binary fallback), or a negative errno when the table itself
  * could not be read (the caller decides whether that warrants a full binary
- * fallback).
- * ---------------------------------------------------------------------------*/
+ * fallback). */
 
 static int insert_iface_accept(int fd, unsigned int hook, const char *chain,
                                const char *iface, int is_out) {
@@ -961,16 +1035,14 @@ static int insert_iface_accept(int fd, unsigned int hook, const char *chain,
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Public API: ds_ipt_ensure_forward_accept
+/* Public API: ds_ipt_ensure_forward_accept
  *
  * Inserts:
  *   -t filter -I FORWARD 1 -i <iface> -j ACCEPT
  *   -t filter -I FORWARD 1 -o <iface> -j ACCEPT
  *
  * Called with DS_NAT_BRIDGE ("ds-br0") when bridge-nf-call-iptables=1 so
- * the FORWARD hook sees the bridge interface name as the ingress/egress.
- * ---------------------------------------------------------------------------*/
+ * the FORWARD hook sees the bridge interface name as the ingress/egress. */
 
 int ds_ipt_ensure_forward_accept(const char *iface) {
   ds_log("[IPT] ensure_forward_accept: iface=%s", iface);
@@ -1013,11 +1085,9 @@ binary_fallback_fwd:
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Public API: ds_ipt_ensure_input_accept
+/* Public API: ds_ipt_ensure_input_accept
  *
- * Inserts: -t filter -I INPUT 1 -i <iface> -j ACCEPT
- * ---------------------------------------------------------------------------*/
+ * Inserts: -t filter -I INPUT 1 -i <iface> -j ACCEPT */
 
 int ds_ipt_ensure_input_accept(const char *iface) {
   ds_log("[IPT] ensure_input_accept: iface=%s", iface);
@@ -1050,8 +1120,7 @@ binary_fallback_inp: {
 }
 }
 
-/* ---------------------------------------------------------------------------
- * Public API: ds_ipt_ensure_mss_clamp
+/* Public API: ds_ipt_ensure_mss_clamp
  *
  * MSS clamping rule for TCP SYN packets - prevents MTU blackhole through
  * bridge + veth path.
@@ -1059,8 +1128,7 @@ binary_fallback_inp: {
  * The raw socket API for this rule is disproportionately complex because it
  * requires two match extension payloads (xt_tcp + xt_TCPMSS with pmtu flag).
  * We use the iptables binary exclusively, with an existence check first to
- * remain idempotent.
- * ---------------------------------------------------------------------------*/
+ * remain idempotent. */
 
 int ds_ipt_ensure_mss_clamp(void) {
   ds_log("[IPT] ensure_mss_clamp");
@@ -1146,12 +1214,10 @@ int ds_ipt_remove_iface_rules(const char *iface) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Public API: ds_ipt_remove_ds_rules
+/* Public API: ds_ipt_remove_ds_rules
  *
  * Cleanly removes all rules Droidspaces inserted during NAT setup.
- * Safe to call even if container died unexpectedly.
- * ---------------------------------------------------------------------------*/
+ * Safe to call even if container died unexpectedly. */
 
 int ds_ipt_remove_ds_rules(void) {
   ds_log("[IPT] remove_ds_rules");
@@ -1254,11 +1320,9 @@ int ds_ipt_remove_ds_rules(void) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Internal: check if xt_addrtype match is available on this kernel.
+/* Internal: check if xt_addrtype match is available on this kernel.
  * Reads /proc/net/ip_tables_matches which lists every loaded/built-in match.
- * Falls back to false if the file is unreadable (e.g. no CONFIG_NETFILTER).
- * ---------------------------------------------------------------------------*/
+ * Falls back to false if the file is unreadable (e.g. no CONFIG_NETFILTER). */
 
 static int addrtype_available(void) {
   FILE *f = fopen("/proc/net/ip_tables_matches", "re");
@@ -1275,8 +1339,7 @@ static int addrtype_available(void) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Port-forward state file helpers
+/* Port-forward state file helpers
  *
  * We persist a record of every rule actually inserted into iptables so that
  * ds_ipt_remove_portforwards can delete exactly those rules even when the
@@ -1288,8 +1351,7 @@ static int addrtype_available(void) {
  *   <addrtype|basic> <proto> <host_port_str> <to_dest> <cont_port_str>
  *
  * The file is created/truncated at ds_ipt_add_portforwards() time and
- * unlinked after ds_ipt_remove_portforwards() consumes it.
- * ---------------------------------------------------------------------------*/
+ * unlinked after ds_ipt_remove_portforwards() consumes it. */
 
 static void pf_state_path(const char *container_ip, char *buf, size_t len) {
   snprintf(buf, len, "%s/pf_%s.state", get_net_dir(), container_ip);
@@ -1404,8 +1466,7 @@ static void pf_fmt_ports(const struct ds_port_forward *pf,
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Public API: ds_ipt_add_portforwards
+/* Public API: ds_ipt_add_portforwards
  *
  * For each entry in cfg->port_forwards, inserts:
  *   -t nat    -I PREROUTING  -p <proto> --dport <host_port> -j DNAT
@@ -1414,13 +1475,21 @@ static void pf_fmt_ports(const struct ds_port_forward *pf,
  *             --dport <container_port> -j ACCEPT
  *
  * Binary fallback only - DNAT raw socket construction is disproportionately
- * complex for a feature that only fires at container start.
- * ---------------------------------------------------------------------------*/
+ * complex for a feature that only fires at container start. */
 
-int ds_ipt_add_portforwards(struct ds_config *cfg, const char *container_ip) {
-  if (!cfg || cfg->port_forward_count <= 0 || !container_ip ||
-      container_ip[0] == '\0')
+int ds_ipt_add_portforwards(struct ds_port_forward *pfs, int count,
+                            const char *container_ip) {
+  if (!pfs || count <= 0 || !container_ip || container_ip[0] == '\0')
     return 0;
+
+  /* Drop anything a previous install recorded before adding it again.  These
+   * rules go in through the iptables binary, which has no idempotency check,
+   * so re-running this on a partially flushed table (netd wiped nat
+   * PREROUTING but left our POSTROUTING/FORWARD rules, say) would otherwise
+   * stack a second copy of every survivor - and removal only issues one -D
+   * per recorded rule, so the extras would leak on container stop.  No state
+   * file (first install) makes this a no-op. */
+  pf_state_remove(container_ip);
 
   /* Open the state file for this container (truncate any stale copy).
    * Every rule we successfully insert is recorded so that
@@ -1446,8 +1515,8 @@ int ds_ipt_add_portforwards(struct ds_config *cfg, const char *container_ip) {
   write_file("/proc/sys/net/ipv4/conf/all/route_localnet", "1");
   ds_net_mark_local_forward_active();
 
-  for (int i = 0; i < cfg->port_forward_count; i++) {
-    struct ds_port_forward *pf = &cfg->port_forwards[i];
+  for (int i = 0; i < count; i++) {
+    struct ds_port_forward *pf = &pfs[i];
 
     char host_port_str[16], cont_port_str[16], to_dest[80];
     pf_fmt_ports(pf, container_ip, host_port_str, cont_port_str, to_dest);
@@ -1576,8 +1645,7 @@ int ds_ipt_add_portforwards(struct ds_config *cfg, const char *container_ip) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Public API: ds_ipt_remove_portforwards
+/* Public API: ds_ipt_remove_portforwards
  *
  * Three-pass cleanup strategy, in order of reliability:
  *
@@ -1597,8 +1665,7 @@ int ds_ipt_add_portforwards(struct ds_config *cfg, const char *container_ip) {
  *   Pass 3 - iptables-save shell sweep (last resort)
  *     Only runs when no state file was found. Scans live iptables rules for
  *     anything targeting this container IP and removes them. Catches orphaned
- *     rules from container crashes or pre-state-file installations.
- * ---------------------------------------------------------------------------*/
+ *     rules from container crashes or pre-state-file installations. */
 
 int ds_ipt_remove_portforwards(struct ds_config *cfg) {
   if (!cfg)

@@ -13,7 +13,6 @@
     <string name="close">关闭</string>
     <string name="refresh">刷新</string>
     <string name="search">搜索</string>
-    <string name="clear">清除</string>
     <string name="container_singular">容器</string>
     <string name="running">运行中</string>
     <string name="kernel_requirements_copied">内核所需配置已复制到剪贴板</string>
@@ -69,6 +68,8 @@
     <string name="follow_system_theme_description">自动跟随系统主题</string>
     <string name="dark_theme">深色模式</string>
     <string name="dark_theme_description">开启深色模式</string>
+    <string name="terminal_dark_theme">终端深色模式</string>
+    <string name="terminal_dark_theme_description">仅终端页面使用深色配色</string>
     <string name="amoled_mode">AMOLED 模式</string>
     <string name="amoled_mode_description">为 OLED 屏幕提供纯黑背景</string>
     <string name="dynamic_color">使用系统默认配色方案</string>
@@ -260,7 +261,6 @@
     <string name="no_output_available">没有可用的输出</string>
     <string name="container_path">容器路径：%1$s</string>
     <string name="installation_failed">安装失败</string>
-    <string name="unknown_error">发生未知错误</string>
     <string name="environment_variables">环境变量</string>
     <string name="no_static_services">没有静态服务</string>
     <string name="search_services">搜索服务...</string>
@@ -298,7 +298,6 @@
     <string name="not_configured">未配置</string>
     <string name="failed_to_update_config">更新配置失败</string>
     <string name="error_octet_range">范围：1-254</string>
-    <string name="sparse_image_configuration">稀疏镜像配置</string>
     <string name="no_options_enabled">未启用任何附加选项</string>
     <string name="no_services_found">未找到服务</string>
     <string name="dns_servers_hint">仅允许数字、点和冒号</string>
@@ -342,7 +341,7 @@
     <string name="feat_containers_desc">采用与 LXC、Podman 及 Docker 相同的内核命名空间技术。无需模拟或 chroot。</string>
     <string name="feat_overhead_title">零开销</string>
     <string name="feat_overhead_desc">直接与宿主 Linux 内核交互。无需 Hypervisor，亦无虚拟机层。</string>
-    <string name="feat_unkillable_title">由于设计层面而无法被终止</string>
+    <string name="feat_unkillable_title">设计上不可终止</string>
     <string name="feat_unkillable_desc">原生支持 init.rc 集成与双层用户空间守护进程。不会被轻易终止。</string>
     <string name="feat_init_title">以 systemd / OpenWrt procd / OpenRC 作为 PID 1</string>
     <string name="feat_init_desc">支持完整的 Init 系统。具备真实的服务管理能力，并非简单的模拟环境。</string>
@@ -378,8 +377,6 @@
     <string name="no_matches">没有匹配项</string>
     <string name="empty_directory">空目录</string>
     <string name="select_folder">选择文件夹</string>
-    <string name="tcp">TCP</string>
-    <string name="udp">UDP</string>
     <string name="cpu">CPU:</string>
     <string name="ram">RAM:</string>
     <string name="terminal_logs">终端日志</string>
@@ -400,16 +397,15 @@
     <string name="starting_export">开始导出...</string>
     <string name="welcome_tagline">Linux 容器。原生运行。零性能损耗。</string>
     <string name="feat_containers_title">真正的 Linux 容器</string>
-    <string name="error_container_name_too_long">名称过长 - 最多17个字符（内核loop设备路径限制）</string>
     <string name="network_mode_host_short">主机</string>
     <string name="network_mode_nat_short">NAT</string>
     <string name="network_mode_none_short">无</string>
     <string name="hw_access_disclaimer">从 Droidspaces v6.1.0 版本开始，udevd 可完整接管 USB、块设备、输入设备、串口、网络子系统权限，容器能够直接占用安卓系统正在使用的硬件资源。\n\n若启动容器后，安卓端键盘、SD 卡、USB 外设等设备失效，这并非程序 BUG，是容器抢占占用了硬件资源，属于正常设计行为。\n\n请勿提交因硬件资源冲突、该模式引发内核宕机死机相关的问题反馈。</string>
-    <string name="custom_init_warning">除非你清楚你在做什么，否则不要更改此选项。设定错误的 init 可执行文件路径会导致容器无法启动。</string>
+    <string name="custom_init_warning">除非你很清楚你在做什么，否则不要更改此选项。设定错误的 init 可执行文件路径会导致容器无法启动。</string>
     <string name="custom_init_label">指定 init 可执行文件路径</string>
-    <string name="custom_init_placeholder">/sbin/init（默认）</string>
-    <string name="custom_init_hint">留空以使用默认的 init (/sbin/init)</string>
-    <string name="custom_init_error_absolute">路径必须为绝对路径（以 / 开头）</string>
+    <string name="custom_init_placeholder">/sbin/init (默认)</string>
+    <string name="custom_init_hint">留空则使用默认值 (/sbin/init)</string>
+    <string name="custom_init_error_absolute">路径必须是以 / 开头的绝对路径</string>
     <string name="custom_init_option">自定义 init</string>
     <string name="notification_title">Droidspaces 终端</string>
     <string name="notification_wakelock_on">唤醒锁定：开</string>
@@ -426,7 +422,6 @@
     <string name="repo_retry">重试</string>
     <string name="repo_notification_description">下载 Droidspaces 根文件系统</string>
     <string name="repo_error_no_assets">最新发布版中未找到根文件系统压缩包</string>
-    <string name="repo_error_network">网络错误</string>
     <string name="repo_dl_error_unknown">未知错误</string>
     <string name="repo_dl_error_cannot_resume">无法恢复下载</string>
     <string name="repo_dl_error_device_not_found">未找到存储</string>
@@ -449,7 +444,6 @@
     <string name="repo_custom_name_hint">仓库名称</string>
     <string name="repo_not_found_in_repo">仓库中未找到 %1$s</string>
     <string name="repo_manage_custom">管理仓库</string>
-    <string name="repo_no_custom">没有自定义仓库订阅。</string>
     <string name="repo_custom_add">订阅</string>
     <string name="repo_custom_name_empty">名称不能为空</string>
     <string name="repo_manager_subtitle">订阅自定义 rootfs.json 源。</string>
@@ -499,11 +493,9 @@
     <string name="error_gateway_bridge_taken">桥接已被 \'%1$s\' 使用。请使用不同的局域网名称。</string>
     <string name="error_gateway_iface_taken">接口已被另一个段（\'%1$s\'）使用。请使用其他接口。</string>
     <string name="openwrt_services">OpenWrt 服务</string>
-    <string name="procd_services_placeholder_desc">将在下一个补丁中加入 %1$s 的服务管理功能。</string>
     <string name="unknown_legend">未知</string>
     <string name="reload_service">重新加载服务</string>
     <string name="no_unknown_services">没有未知状态的服务</string>
-    <string name="procd_detected">已检测到 OpenWrt/procd</string>
     <string name="openwrt">OpenWrt</string>
     <string name="disk_usage">磁盘占用</string>
     <string name="disk_usage_used_of_total">已使用 %1$s / %2$s</string>
@@ -515,4 +507,35 @@
     <string name="accent_color">强调色</string>
     <string name="type_container_name_to_confirm">完整输入容器名称以确认：</string>
     <string name="debugging_section">调试</string>
+    <string name="systemctl_status_section">systemctl 状态</string>
+    <string name="inspect_unit">检查单元</string>
+    <string name="edit_override">编辑覆盖配置</string>
+    <string name="property_description">描述</string>
+    <string name="property_load_state">加载状态</string>
+    <string name="property_active_state">活动状态</string>
+    <string name="property_sub_state">子状态</string>
+    <string name="property_enablement">启用状态</string>
+    <string name="property_unit_file">单元文件</string>
+    <string name="property_drop_ins">Drop-in 配置文件</string>
+    <string name="property_main_pid">主 PID</string>
+    <string name="property_started_at">启动时间</string>
+    <string name="property_restart_policy">重启策略</string>
+    <string name="property_memory">内存</string>
+    <string name="property_cpu_time">CPU 时间 (纳秒)</string>
+    <string name="unit_detail_load_error_title">无法加载单元详细信息</string>
+    <string name="unit_detail_load_error_message">单元可能已不存在，或容器当前无法访问。</string>
+    <string name="properties_section">属性</string>
+    <string name="dependencies_section">依赖关系</string>
+    <string name="override_saved">覆盖配置已保存，重启单元以应用更改。</string>
+    <string name="failed_to_save_override">保存覆盖配置失败</string>
+    <string name="override_removed">覆盖配置已删除。</string>
+    <string name="failed_to_remove_override">删除覆盖配置失败</string>
+    <string name="edit_override_title">编辑覆盖配置 · %1$s</string>
+    <string name="delete_override">删除覆盖配置</string>
+    <string name="save_override">保存覆盖配置</string>
+    <string name="override_placeholder">[Service]\nEnvironment=FOO=bar</string>
+    <string name="saving_override">正在保存覆盖配置…</string>
+    <string name="applying_override">正在应用覆盖配置…</string>
+    <string name="fetching_distros">正在从 rootfs 仓库中获取发行版……</string>
+    <string name="resize_same_as_current">当前已为 %1$d GB，请输入其他容量大小。</string>
 </resources>

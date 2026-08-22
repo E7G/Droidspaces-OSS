@@ -11,13 +11,11 @@ int ds_log_silent = 0;
 char ds_log_container_name[256] = "";
 int ds_log_container_fd = -1;
 
-/* ---------------------------------------------------------------------------
- * Usage / Help
- * ---------------------------------------------------------------------------*/
+/* Usage / Help */
 
 void print_usage(void) {
   printf(C_BOLD
-         "%s v%s — High-performance Container Runtime for Android/Linux" C_RESET
+         "%s v%s - High-performance Container Runtime for Android/Linux" C_RESET
          "\n",
          DS_PROJECT_NAME, DS_VERSION);
   printf("by " C_CYAN "%s" C_RESET "\n", DS_AUTHOR);
@@ -90,7 +88,9 @@ void print_usage(void) {
       "      --virgl-flags=\"FLAGS\"   Extra flags passed to "
       "virgl_test_server_android\n"
       "      --pulse-audio         Configure PulseAudio sound server "
-      "support\n\n");
+      "support\n"
+      "      --anland              Embed the anland display daemon "
+      "(Android)\n\n");
 
   printf(
       C_BOLD
@@ -133,9 +133,7 @@ void print_usage(void) {
          "  droidspaces --name=mycontainer stop\n\n");
 }
 
-/* ---------------------------------------------------------------------------
- * Validation Helpers
- * ---------------------------------------------------------------------------*/
+/* Validation Helpers */
 
 static int validate_kernel_version(void) {
   int major = 0, minor = 0;
@@ -280,9 +278,7 @@ static int auto_resolve_container_name(struct ds_config *cfg) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Command Dispatch
- * ---------------------------------------------------------------------------*/
+/* Command Dispatch */
 
 static void enforce_nat_safety(struct ds_config *cfg, int argc, char **argv) {
   int is_nat = (cfg->net_mode == DS_NET_NAT);
@@ -415,6 +411,7 @@ int main(int argc, char **argv) {
       {"virgl", no_argument, 0, 270},
       {"virgl-flags", required_argument, 0, 272},
       {"pulse-audio", no_argument, 0, 273},
+      {"anland", no_argument, 0, 278},
       {"gateway", required_argument, 0, 274},
       {"gateway-container", required_argument, 0, 274},
       {"gateway-net", required_argument, 0, 275},
@@ -678,6 +675,9 @@ int main(int argc, char **argv) {
       break;
     case 273:
       cfg.pulseaudio = 1;
+      break;
+    case 278:
+      cfg.anland = 1;
       break;
     case 274:
       safe_strncpy(cfg.gateway_container, optarg,

@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -28,6 +29,7 @@ import com.droidspaces.app.util.ContainerProcdManager
 import com.droidspaces.app.util.ContainerOpenRCManager
 import com.droidspaces.app.util.ContainerDiskUsageManager
 import com.droidspaces.app.util.ContainerManager
+import com.droidspaces.app.util.AnlandUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
@@ -72,6 +74,14 @@ fun ContainerDetailsScreen(
     // Uses persistent cache that survives app restarts
     var osInfo by remember {
         mutableStateOf(ContainerOSInfoManager.getCachedOSInfo(container.name, context))
+    }
+
+    // anland display socket (recorded by the native runtime in Pids/<name>.anland);
+    // presence gates the "Launch Anland Window" action in the terminal card.
+    var anlandSocket by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(container.name, container.enableAnland, refreshTrigger) {
+        anlandSocket = if (container.enableAnland)
+            ContainerManager.getAnlandSocket(container.name) else null
     }
 
     // Init system state - detect systemd first, then OpenWrt/procd, then OpenRC
@@ -257,7 +267,11 @@ fun ContainerDetailsScreen(
             item(key = "terminal_${container.name}") {
                 TerminalCard(
                     containerName = container.name,
-                    onOpenTerminal = onNavigateToTerminal
+                    onOpenTerminal = onNavigateToTerminal,
+                    anlandEnabled = container.enableAnland && anlandSocket != null,
+                    onLaunchAnland = {
+                        anlandSocket?.let { AnlandUtils.launchWindow(context, container.name, it) }
+                    }
                 )
             }
 
@@ -375,6 +389,8 @@ private fun IdentityToken(
 private fun TerminalCard(
     containerName: String,
     onOpenTerminal: () -> Unit,
+    anlandEnabled: Boolean = false,
+    onLaunchAnland: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -404,10 +420,12 @@ private fun TerminalCard(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
+      Column(
+          modifier = Modifier.fillMaxWidth().padding(20.dp),
+          verticalArrangement = Arrangement.spacedBy(14.dp)
+      ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -446,6 +464,7 @@ private fun TerminalCard(
             Button(
                 onClick = onOpenTerminal,
                 modifier = Modifier.widthIn(min = 140.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary
@@ -463,6 +482,31 @@ private fun TerminalCard(
                 )
             }
         }
+
+        // Launch the anland desktop window, shown only when this container has
+        // the anland display daemon enabled and a live socket recorded.
+        if (anlandEnabled) {
+            Button(
+                onClick = onLaunchAnland,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            ) {
+                Icon(
+                    Icons.Default.DesktopWindows,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    context.getString(R.string.launch_anland_window),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+      }
     }
 }
 
@@ -548,9 +592,9 @@ private fun SparseDiskUsageCard(
                 progress = { animatedFraction },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    .height(8.dp),
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                strokeCap = StrokeCap.Round
             )
         }
     }
@@ -651,6 +695,7 @@ private fun PremiumInitSystemCard(
                             onClick = {},
                             enabled = false,
                             modifier = Modifier.widthIn(min = 140.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -670,6 +715,7 @@ private fun PremiumInitSystemCard(
                             onClick = {},
                             enabled = false,
                             modifier = Modifier.widthIn(min = 140.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 disabledContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f),
                                 disabledContentColor = MaterialTheme.colorScheme.onErrorContainer
@@ -682,6 +728,7 @@ private fun PremiumInitSystemCard(
                         Button(
                             onClick = { onNavigateToServices(currentState.initSystem) },
                             modifier = Modifier.widthIn(min = 140.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = MaterialTheme.colorScheme.onPrimary

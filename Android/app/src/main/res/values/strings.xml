@@ -45,7 +45,6 @@
     <string name="close">Close</string>
     <string name="refresh">Refresh</string>
     <string name="search">Search</string>
-    <string name="clear">Clear</string>
 
     <!-- Main Tab Screen -->
     <string name="container_singular">Container</string>
@@ -82,6 +81,8 @@
     <string name="follow_system_theme_description">Automatically match system theme</string>
     <string name="dark_theme">Dark Theme</string>
     <string name="dark_theme_description">Enable dark theme</string>
+    <string name="terminal_dark_theme">Terminal Dark Mode</string>
+    <string name="terminal_dark_theme_description">Use dark colors for the terminal page only</string>
     <string name="amoled_mode">AMOLED Mode</string>
     <string name="amoled_mode_description">Pure black background for OLED displays</string>
     <string name="dynamic_color">Apply System\'s Default Color Palette</string>
@@ -152,6 +153,7 @@
     <string name="cgroup_v1_option">Cgroup V1</string>
     <string name="deadlock_shield_option">Deadlock Shield</string>
     <string name="privileged_option">Privileged</string>
+    <string name="anland_option">Anland</string>
     <string name="userns_option">User Namespaces</string>
     <string name="installation_setup_summary">Installation Summary</string>
     <string name="review_configuration">Review Configuration</string>
@@ -211,6 +213,10 @@
     <string name="allow_userns_description_not_supported">Not supported. CONFIG_USER_NS is not enabled in the kernel</string>
     <string name="run_at_boot">Run at Boot</string>
     <string name="run_at_boot_description">Start container on boot</string>
+    <string name="enable_anland">Anland Display</string>
+    <string name="enable_anland_description">Run the anland display daemon so you can open a desktop window</string>
+    <string name="launch_anland_window">Launch Anland</string>
+    <string name="anland_not_installed">Anland consumer app is not installed</string>
     <string name="auto_boot_priority">Auto Boot Priority</string>
     <string name="auto_boot_priority_description">Order in which run-at-boot containers start</string>
     <string name="auto_boot_priority_hint">Drag to reorder. Containers start top to bottom - put a gateway (e.g. OpenWRT) first so it boots before the containers that route through it.</string>
@@ -336,6 +342,8 @@
     <string name="configuration_title">Configuration</string>
     <string name="container_options">Container Options</string>
     <string name="next_storage">Next: Storage</string>
+    <string name="next_summary">Next: Summary</string>
+    <string name="storage_title">Storage</string>
 
     <!-- Installation Screen -->
     <string name="installing_container">Installing Container</string>
@@ -346,7 +354,6 @@
     <string name="installing_droidspaces">Installing Droidspaces</string>
     <string name="module_installed_success">Magisk module installed successfully</string>
     <string name="backend_installed_success">Droidspaces backend installed successfully</string>
-    <string name="unknown_error">Unknown error occurred</string>
     <string name="module_installation_failed">Module installation failed</string>
     <string name="binary_installation_failed">Binary installation failed</string>
     <string name="removing_old_module">Removing old module...</string>
@@ -368,8 +375,6 @@
     <string name="select_folder">Select Folder</string>
 
     <!-- Protocols -->
-    <string name="tcp">TCP</string>
-    <string name="udp">UDP</string>
     <string name="cpu">CPU:</string>
     <string name="ram">RAM:</string>
 
@@ -393,14 +398,13 @@
     <string name="systemd_services">Systemd Services</string>
     <string name="openwrt_services">OpenWrt Services</string>
     <string name="openwrt">OpenWrt</string>
-    <string name="procd_detected">OpenWrt/procd detected</string>
-    <string name="procd_services_placeholder_desc">Service management for %1$s will be added in the next patch.</string>
     <string name="openrc_services">OpenRC Services</string>
     <string name="openrc">OpenRC</string>
     <string name="init_system">Init System</string>
     <string name="init_system_not_available">Systemd/OpenWrt/OpenRC Not Available</string>
     <string name="init_system_not_available_desc">This container does not have systemd, OpenWrt/procd, or OpenRC installed</string>
     <string name="fetching_services">Fetching services...</string>
+    <string name="fetching_distros">Fetching distros from the rootfs repo...</string>
 
     <string name="search_services">Search services...</string>
     <string name="enabled_legend">Enabled</string>
@@ -416,6 +420,35 @@
     <string name="restart_service">Restart service</string>
     <string name="reload_service">Reload service</string>
     <string name="mask_service">Mask service</string>
+    <string name="inspect_unit">Inspect unit</string>
+    <string name="edit_override">Edit override</string>
+    <string name="property_description">Description</string>
+    <string name="property_load_state">Load State</string>
+    <string name="property_active_state">Active State</string>
+    <string name="property_sub_state">Sub State</string>
+    <string name="property_enablement">Enablement</string>
+    <string name="property_unit_file">Unit File</string>
+    <string name="property_drop_ins">Drop-ins</string>
+    <string name="property_main_pid">Main PID</string>
+    <string name="property_started_at">Started At</string>
+    <string name="property_restart_policy">Restart Policy</string>
+    <string name="property_memory">Memory</string>
+    <string name="property_cpu_time">CPU Time (ns)</string>
+    <string name="unit_detail_load_error_title">Couldn\'t load unit details</string>
+    <string name="unit_detail_load_error_message">The unit may no longer exist, or the container may be unreachable.</string>
+    <string name="properties_section">Properties</string>
+    <string name="dependencies_section">Dependencies</string>
+    <string name="systemctl_status_section">systemctl status</string>
+    <string name="override_saved">Override saved. Restart the unit to apply the change.</string>
+    <string name="failed_to_save_override">Failed to save override</string>
+    <string name="override_removed">Override removed.</string>
+    <string name="failed_to_remove_override">Failed to remove override</string>
+    <string name="edit_override_title">Edit Override · %1$s</string>
+    <string name="delete_override">Delete override</string>
+    <string name="save_override">Save override</string>
+    <string name="override_placeholder">[Service]\nEnvironment=FOO=bar</string>
+    <string name="saving_override">Saving override…</string>
+    <string name="applying_override">Applying override…</string>
     <string name="action_successful">%1$s %2$s successful</string>
     <string name="failed_to_action">Failed to %1$s %2$s</string>
     <string name="error_unknown">Error: %1$s</string>
@@ -465,7 +498,6 @@
     <string name="gb_size">%1$dGB</string>
 
     <!-- Sparse Image Config Screen -->
-    <string name="sparse_image_configuration">Sparse Image Configuration</string>
     <string name="storage_configuration">Storage Configuration</string>
     <string name="about_sparse_images">About Sparse Images</string>
     <string name="sparse_images_recommended">Sparse images are recommended when using containers on encrypted storage, F2FS /data partitions, or other filesystems that may have compatibility issues with direct directory mounting.</string>
@@ -479,6 +511,22 @@
     <string name="maximum_size_512gb">Maximum size is 512 GB</string>
     <string name="size_gb">Size (GB)</string>
     <string name="enter_size_between_4_512_gb">Enter size between 4 and 512 GB</string>
+    <string name="resize_same_as_current">Already %1$d GB. Enter a different size to resize.</string>
+
+    <!-- Storage location -->
+    <string name="storage_location">Storage location</string>
+    <string name="storage_location_default">Internal (default)</string>
+    <string name="storage_location_default_description">Keeps the rootfs under %1$s</string>
+    <string name="storage_location_custom">Choose a folder</string>
+    <string name="storage_location_custom_description">Put the rootfs on an SD card, USB drive or another folder</string>
+    <string name="storage_location_pick">Select storage folder</string>
+    <string name="storage_location_change_hint">Tap to choose a different folder</string>
+    <string name="storage_location_checking">Checking this location...</string>
+    <string name="storage_location_free">%1$s, %2$d GB free</string>
+    <string name="storage_location_fs_only">%1$s</string>
+    <string name="storage_location_image_forced">Sparse image required here</string>
+    <string name="sparse_image_section">Sparse image</string>
+    <string name="storage_location_needs_space">At least %1$d GB of free space is required here.</string>
 
     <!-- Container Log Viewer -->
     <string name="logs_title">Logs: %1$s</string>
@@ -488,7 +536,6 @@
     <!-- Validation Error Messages -->
     <string name="error_container_name_empty">Container name cannot be empty</string>
     <string name="error_container_name_invalid">Container name can only contain letters, numbers, hyphens (-), underscores (_), dots (.), and spaces</string>
-    <string name="error_container_name_too_long">Name too long - max 17 characters (kernel loop device path limit)</string>
     <string name="error_hostname_invalid">Hostname can only contain letters, numbers, and dashes (-)</string>
 
     <!-- Process List -->
@@ -568,7 +615,6 @@
     <string name="repo_retry">Retry</string>
     <string name="repo_notification_description">Droidspaces rootfs download</string>
     <string name="repo_error_no_assets">No rootfs tarballs found in latest release</string>
-    <string name="repo_error_network">Network error</string>
     <string name="repo_dl_error_unknown">Unknown error</string>
     <string name="repo_dl_error_cannot_resume">Cannot resume download</string>
     <string name="repo_dl_error_device_not_found">Storage not found</string>
@@ -593,6 +639,5 @@
     <string name="repo_custom_name_empty">Name cannot be empty</string>
     <string name="repo_custom_url_empty">URL cannot be empty</string>
     <string name="repo_custom_url_invalid">URL must start with https://</string>
-    <string name="repo_no_custom">No custom repositories subscribed yet.</string>
     <string name="debugging_section">Debugging</string>
 </resources>

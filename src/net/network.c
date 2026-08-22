@@ -24,9 +24,7 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 
-/* ---------------------------------------------------------------------------
- * Internal helpers
- * ---------------------------------------------------------------------------*/
+/* Internal helpers */
 
 /* Host-side veth prefix for an application container.  NAT containers use
  * "ds-v"; gateway clients use "ds-c" so the NAT-mode "last container" refcount
@@ -244,9 +242,7 @@ static int netns_has_link(const char *netns_path, const char *ifname) {
   return present;
 }
 
-/* ---------------------------------------------------------------------------
- * Uplink routing globals - shared by android routing setup and monitor
- * ---------------------------------------------------------------------------*/
+/* Uplink routing globals - shared by android routing setup and monitor */
 
 static int g_current_gw_table = 0;
 static pthread_mutex_t g_gw_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -269,6 +265,17 @@ static volatile sig_atomic_t g_local_forward_active = 0;
 static char g_upstream_ifaces[DS_MAX_UPSTREAM_IFACES][IFNAMSIZ];
 static int g_upstream_count = 0;
 
+/* Shape of the host-side rules this monitor installed, captured in
+ * setup_veth_host_side() before the monitor thread starts and only rewritten
+ * from that same path on a container reboot.  The monitor replays exactly
+ * these when Android's netd flushes the tables out from under a running
+ * container - see install_netfilter_rules(). */
+static int g_host_bridgeless = 0;
+static char g_host_veth[IFNAMSIZ];
+static struct ds_port_forward g_host_port_forwards[DS_MAX_PORT_FORWARDS];
+static int g_host_port_forward_count = 0;
+static char g_host_container_ip[INET_ADDRSTRLEN];
+
 /* Returns 1 if ifname exists and is both UP and RUNNING.
  * On Android, the active data interface has IFF_RUNNING set; an interface
  * that is physically present but not carrying data loses IFF_RUNNING. */
@@ -286,8 +293,7 @@ static int iface_is_running(const char *ifname) {
   return ret;
 }
 
-/* ---------------------------------------------------------------------------
- * Built-in uplink classification (no user configuration)
+/* Built-in uplink classification (no user configuration)
  *
  * k_uplink_patterns: the only interface families that terminate internet
  * access on Android, highest precedence first - Wi-Fi STA, ethernet
@@ -300,8 +306,7 @@ static int iface_is_running(const char *ifname) {
  * the router, these face clients, not the internet).  tun/ppp are VPN
  * tunnels which container traffic intentionally bypasses (see the
  * DS_RULE_PRIO_* rationale in droidspace.h).  The rest are loopback,
- * placeholders, and our own bridge/veth devices.
- * ---------------------------------------------------------------------------*/
+ * placeholders, and our own bridge/veth devices. */
 
 static const char *const k_uplink_patterns[] = {
     "wlan*", "eth*", "v4-*", "rmnet*", "*ccmni*",
@@ -321,9 +326,7 @@ static int uplink_name_excluded(const char *ifname) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Public helper: populate a ds_net_handshake from a container init PID
- * ---------------------------------------------------------------------------*/
+/* Public helper: populate a ds_net_handshake from a container init PID */
 
 void ds_net_derive_handshake(pid_t init_pid, struct ds_config *cfg,
                              struct ds_net_handshake *hs) {
@@ -341,9 +344,7 @@ void ds_net_derive_handshake(pid_t init_pid, struct ds_config *cfg,
     hs->ip_str[0] = '\0';
 }
 
-/* ---------------------------------------------------------------------------
- * Host-side networking setup (before container boot)
- * ---------------------------------------------------------------------------*/
+/* Host-side networking setup (before container boot) */
 
 int ds_get_dns_servers(const char *custom_dns, char *out, size_t size) {
   out[0] = '\0';
@@ -376,9 +377,7 @@ int ds_get_dns_servers(const char *custom_dns, char *out, size_t size) {
   return count;
 }
 
-/* ---------------------------------------------------------------------------
- * Static NAT IP: validation, collision check, and resolution
- * ---------------------------------------------------------------------------*/
+/* Static NAT IP: validation, collision check, and resolution */
 
 int ds_net_validate_static_ip(const char *ip_str, char *errbuf,
                               size_t errsize) {
@@ -571,84 +570,94 @@ int fix_networking_host(struct ds_config *cfg) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Android-specific policy routing
+/* Android-specific policy routing
  *
  * Detects the active uplink (the routing table netd designates as the
  * default internet network), then injects low-priority ip rules to direct
  * container traffic through that table.  Fully automatic - the route
- * monitor keeps the rule in sync across wifi <-> mobile-data handoffs.
- * ---------------------------------------------------------------------------*/
+ * monitor keeps the rule in sync across wifi <-> mobile-data handoffs. */
 
 /* Forward declaration - defined later in this file after route monitor globals
  */
 static int find_active_uplink(ds_nl_ctx_t *ctx, char *iface_out,
                               int *table_out);
 
+/* Install (or reinstall) the container policy rules.  Single source of truth
+ * for the FIB rule set: container start calls it once, and the route monitor
+ * calls it on every cycle, because Android's netd flushes the whole rule table
+ * when it restarts and strands every running container (see the monitor's
+ * reconciliation notes).  ds_nl_add_rule4() maps EEXIST to success, so
+ * re-running this is a silent no-op once the rules are in place - which is why
+ * it stays quiet and lets the caller report failures.
+ *
+ * DS_RULE_PRIO_TO_SUBNET (6090): inbound traffic to our subnet always resolves
+ * via the main table.  Installed even with no uplink - without it the host
+ * cannot reach the container at all.
+ *
+ * DS_RULE_PRIO_TETHER (6095): replies from our subnet to hotspot/USB-tether
+ * clients must consult netd's local_network table (which holds every
+ * downstream interface's connected route and no default route) before the
+ * uplink table grabs them.  Also uplink-independent, so tether clients can
+ * reach forwarded ports even with no WAN.
+ *
+ * DS_RULE_PRIO_FROM_SUBNET (6100): traffic from our subnet → the uplink's
+ * internet table, so it only goes in once an uplink has been selected.
+ *
+ * All three sit above Android's VPN rule range (10000–22000), so they are
+ * checked FIRST and container traffic is never hijacked by a VPN catch-all,
+ * and above the OEM reserved low-priority rules (typically < 1000).
+ *
+ * Returns 0 when every applicable rule is in place, -1 if any add failed. */
+static int install_policy_rules(ds_nl_ctx_t *ctx) {
+  uint32_t subnet_be, mask_be;
+  parse_cidr(DS_DEFAULT_SUBNET, &subnet_be, &mask_be);
+  (void)mask_be;
+
+  int ret = 0;
+
+  if (ds_nl_add_rule4(ctx, 0, 0, subnet_be, DS_NAT_PREFIX, RT_TABLE_MAIN,
+                      DS_RULE_PRIO_TO_SUBNET) < 0)
+    ret = -1;
+
+  if (ds_nl_add_rule4(ctx, subnet_be, DS_NAT_PREFIX, 0, 0,
+                      DS_ANDROID_TABLE_LOCAL_NETWORK, DS_RULE_PRIO_TETHER) < 0)
+    ret = -1;
+
+  pthread_mutex_lock(&g_gw_mutex);
+  int gw_table = g_current_gw_table;
+  pthread_mutex_unlock(&g_gw_mutex);
+
+  if (gw_table > 0 && ds_nl_add_rule4(ctx, subnet_be, DS_NAT_PREFIX, 0, 0,
+                                      gw_table, DS_RULE_PRIO_FROM_SUBNET) < 0)
+    ret = -1;
+
+  return ret;
+}
+
 static void ds_net_setup_android_routing(ds_nl_ctx_t *ctx) {
   char active_iface[IFNAMSIZ] = {0};
   int gw_table = 0;
-  find_active_uplink(ctx, active_iface, &gw_table);
-
-  uint32_t subnet_be, mask_be;
-  parse_cidr(DS_DEFAULT_SUBNET, &subnet_be, &mask_be);
-  uint8_t prefix = DS_NAT_PREFIX;
-
-  /* DS_RULE_PRIO_TO_SUBNET (6090): inbound traffic to our subnet always
-   * resolves via main table.  Install this even if no uplink is active
-   * yet - the monitor will handle the FROM rule once an interface comes up.
-   *
-   * Priority 6090 is:
-   *   • above Android's VPN rule range (10000–22000) -> checked FIRST, so
-   *     reply-to-container traffic is never hijacked by a VPN's catch-all rule
-   *   • above OEM reserved low-priority rules (typically < 1000) */
-  int ret = ds_nl_add_rule4(ctx, 0, 0, subnet_be, prefix, RT_TABLE_MAIN,
-                            DS_RULE_PRIO_TO_SUBNET);
-  if (ret < 0)
-    ds_warn("[NET] Android routing: failed to add 'to subnet' rule (%d)",
-            DS_RULE_PRIO_TO_SUBNET);
-
-  /* DS_RULE_PRIO_TETHER (6095): replies from our subnet to hotspot/USB-tether
-   * clients must consult netd's local_network table (which holds every
-   * downstream interface's connected route and no default route) before the
-   * uplink table grabs them.  Installed regardless of uplink state - tether
-   * clients can reach forwarded ports even with no WAN. */
-  ret = ds_nl_add_rule4(ctx, subnet_be, prefix, 0, 0,
-                        DS_ANDROID_TABLE_LOCAL_NETWORK, DS_RULE_PRIO_TETHER);
-  if (ret < 0)
-    ds_warn("[NET] Android routing: failed to add tether-return rule (%d)",
-            DS_RULE_PRIO_TETHER);
 
   /* No uplink yet: find_active_uplink() already logged the single "no WAN"
-   * line.  The TO_SUBNET/tether rules above are in place; the route monitor
-   * installs the FROM rule once an uplink appears. */
-  if (!active_iface[0])
-    return;
-
-  ds_log("[NET] Android routing: active uplink %s → table %d", active_iface,
-         gw_table);
-
-  /* DS_RULE_PRIO_FROM_SUBNET (6100): traffic from our subnet → uplink
-   * internet table.  Also above Android's VPN range so container-originated
-   * traffic always routes through the physical uplink, not through any VPN
-   * tunnel (the container has its own isolation layer). */
-  ret = ds_nl_add_rule4(ctx, subnet_be, prefix, 0, 0, gw_table,
-                        DS_RULE_PRIO_FROM_SUBNET);
-  if (ret == 0) {
-    ds_log("[NET] Android routing: rule from %s lookup table %d (prio %d)",
-           DS_DEFAULT_SUBNET, gw_table, DS_RULE_PRIO_FROM_SUBNET);
+   * line.  The uplink-independent rules still go in below; the route monitor
+   * adds the FROM rule once an interface appears. */
+  if (find_active_uplink(ctx, active_iface, &gw_table) == 0) {
+    ds_log("[NET] Android routing: active uplink %s → table %d, rule from %s "
+           "lookup table %d (prio %d)",
+           active_iface, gw_table, DS_DEFAULT_SUBNET, gw_table,
+           DS_RULE_PRIO_FROM_SUBNET);
     /* Seed the monitor's current table so it knows the baseline */
     pthread_mutex_lock(&g_gw_mutex);
     g_current_gw_table = gw_table;
     pthread_mutex_unlock(&g_gw_mutex);
-  } else {
-    ds_warn("[NET] Android routing: ds_nl_add_rule4 failed (ret=%d)", ret);
   }
+
+  if (install_policy_rules(ctx) < 0)
+    ds_warn("[NET] Android routing: one or more policy rules failed to install "
+            "- container reachability may be degraded");
 }
 
-/* ---------------------------------------------------------------------------
- * TX checksum disable (Samsung/MTK kernel workaround)
- * ---------------------------------------------------------------------------*/
+/* TX checksum disable (Samsung/MTK kernel workaround) */
 
 int ds_net_disable_tx_checksum(const char *ifname) {
   int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -669,8 +678,44 @@ int ds_net_disable_tx_checksum(const char *ifname) {
   return (ret < 0) ? -errno : 0;
 }
 
-/* ---------------------------------------------------------------------------
- * setup_veth_host_side
+/* install_netfilter_rules
+ *
+ * Install (or reinstall) the host-side netfilter rules for this container's
+ * topology.  Counterpart to install_policy_rules(): the single source of truth
+ * for the iptables side, called once at container start and again by the route
+ * monitor after netd flushes the tables.  Every helper is idempotent.
+ *
+ * Reads the g_host_* snapshot rather than cfg, so the monitor thread can call
+ * it without reaching into a struct the reboot path rewrites in place. */
+
+/* Interface the filter rules match on: bridge mode filters on the bridge,
+ * bridgeless PTP filters on the veth itself.  Shared by the installer and the
+ * monitor's presence probe so the two can never disagree about what to look
+ * for.  Empty until setup_veth_host_side() has taken its snapshot. */
+static const char *host_filter_iface(void) {
+  return g_host_bridgeless ? g_host_veth : DS_NAT_BRIDGE;
+}
+
+static void install_netfilter_rules(void) {
+  const char *iface = host_filter_iface();
+
+  if (iface[0]) {
+    ds_ipt_ensure_input_accept(iface);
+    if (ds_ipt_ensure_forward_accept(iface) < 0)
+      ds_warn("[NET] FORWARD ACCEPT failed");
+  }
+
+  if (ds_ipt_ensure_masquerade(DS_DEFAULT_SUBNET) < 0)
+    ds_warn("[NET] MASQUERADE rule failed");
+
+  ds_ipt_ensure_mss_clamp();
+
+  if (g_host_port_forward_count > 0 && g_host_container_ip[0])
+    ds_ipt_add_portforwards(g_host_port_forwards, g_host_port_forward_count,
+                            g_host_container_ip);
+}
+
+/* setup_veth_host_side
  *
  * Called from the Monitor process AFTER receiving the "ready" signal from the
  * container init (via net_ready_pipe).
@@ -682,8 +727,7 @@ int ds_net_disable_tx_checksum(const char *ifname) {
  *   4. Disable TX checksum on host veth (Samsung/MTK workaround)
  *   5. Attach host veth to bridge, bring up
  *   6. Move peer veth into container's network namespace
- *   7. Android policy routing
- * ---------------------------------------------------------------------------*/
+ *   7. Android policy routing */
 
 int setup_veth_host_side(struct ds_config *cfg, pid_t child_pid) {
   char veth_host[IFNAMSIZ], veth_peer[IFNAMSIZ];
@@ -692,6 +736,19 @@ int setup_veth_host_side(struct ds_config *cfg, pid_t child_pid) {
 
   ds_log("Setting up host-side NAT networking for %s (PID %d)...",
          cfg->container_name, (int)child_pid);
+
+  /* Snapshot everything install_netfilter_rules() needs, before anything else
+   * touches the tables.  The monitor thread replays these to rebuild the rules
+   * after a netd flush and must not read cfg directly - the reboot path
+   * rewrites *cfg in place.  static_nat_ip is already resolved and persisted
+   * before the fork, and is exactly what nat_container_ip is set to below. */
+  g_host_bridgeless = cfg->net_bridgeless;
+  safe_strncpy(g_host_veth, veth_host, sizeof(g_host_veth));
+  g_host_port_forward_count = cfg->port_forward_count;
+  memcpy(g_host_port_forwards, cfg->port_forwards,
+         sizeof(g_host_port_forwards));
+  safe_strncpy(g_host_container_ip, cfg->static_nat_ip,
+               sizeof(g_host_container_ip));
 
   ds_nl_ctx_t *ctx = ds_nl_open();
   if (!ctx) {
@@ -741,26 +798,15 @@ int setup_veth_host_side(struct ds_config *cfg, pid_t child_pid) {
         write_file("/proc/sys/net/bridge/bridge-nf-call-iptables", "0");
         write_file("/proc/sys/net/bridge/bridge-nf-call-ip6tables", "0");
       }
-      ds_ipt_ensure_input_accept(DS_NAT_BRIDGE);
     } else {
       write_file("/proc/sys/net/ipv4/conf/all/rp_filter", "0");
       write_file("/proc/sys/net/ipv4/conf/default/rp_filter", "0");
-      /* In bridgeless mode, we must accept input from the veth itself */
-      ds_ipt_ensure_input_accept(veth_host);
     }
   }
 
-  /* 2. iptables rules */
-  if (ds_ipt_ensure_masquerade(DS_DEFAULT_SUBNET) < 0)
-    ds_warn("[NET] MASQUERADE rule failed");
-  if (!cfg->net_bridgeless) {
-    if (ds_ipt_ensure_forward_accept(DS_NAT_BRIDGE) < 0)
-      ds_warn("[NET] FORWARD ACCEPT failed");
-  } else {
-    if (ds_ipt_ensure_forward_accept(veth_host) < 0)
-      ds_warn("[NET] FORWARD ACCEPT failed");
-  }
-  ds_ipt_ensure_mss_clamp();
+  /* 2. iptables rules - the same set the route monitor reinstalls whenever
+   * netd flushes the tables out from under us. */
+  install_netfilter_rules();
 
   /* 3. Create veth pair */
   ds_log("[DEBUG] Creating veth pair %s <-> %s...", veth_host, veth_peer);
@@ -889,23 +935,20 @@ int setup_veth_host_side(struct ds_config *cfg, pid_t child_pid) {
     safe_strncpy(cfg->nat_container_ip, cfg->static_nat_ip,
                  sizeof(cfg->nat_container_ip));
 
-    /* Install DNAT + FORWARD rules for any --port mappings */
-    if (cfg->port_forward_count > 0)
-      ds_ipt_add_portforwards(cfg, cfg->nat_container_ip);
+    /* --port DNAT/FORWARD rules were installed with the rest of the netfilter
+     * set above, from the same snapshot the monitor replays. */
   }
 
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Gateway segment lock
+/* Gateway segment lock
  *
  * One advisory file lock per delegated LAN segment (keyed on the bridge name).
  * Serialises (re)creation of the single shared gateway-side veth + bridge
  * across the independent monitor processes that touch a segment - concurrent
  * client starts, and the gateway re-wiring its clients on (re)boot - so they
- * cannot race each other into EEXIST half-states.
- * ---------------------------------------------------------------------------*/
+ * cannot race each other into EEXIST half-states. */
 
 static int gateway_segment_lock(const char *bridge) {
   char path[PATH_MAX];
@@ -931,9 +974,7 @@ static void gateway_segment_unlock(int fd) {
   close(fd);
 }
 
-/* ---------------------------------------------------------------------------
- * Gateway liveness
- * ---------------------------------------------------------------------------*/
+/* Gateway liveness */
 
 /* Resolve the gateway container's init pid, or 0 if it is not running. */
 static pid_t gateway_pid_of(const char *name) {
@@ -950,8 +991,7 @@ static pid_t gateway_pid_of(const char *name) {
   return p > 0 ? p : 0;
 }
 
-/* ---------------------------------------------------------------------------
- * gateway_ensure_lan_uplink_locked
+/* gateway_ensure_lan_uplink_locked
  *
  * Ensure the shared half of a delegated LAN segment is wired into the running
  * gateway container.  The caller holds the segment lock and has already
@@ -967,8 +1007,7 @@ static pid_t gateway_pid_of(const char *name) {
  * just-rebooted) netns.  This is what heals clients after a gateway restart,
  * with no client restart.
  *
- * Returns 0 when the gateway-side cable is up, -1 on a netlink failure.
- * ---------------------------------------------------------------------------*/
+ * Returns 0 when the gateway-side cable is up, -1 on a netlink failure. */
 
 static int gateway_ensure_lan_uplink_locked(struct ds_config *cfg,
                                             pid_t gw_pid) {
@@ -1104,8 +1143,7 @@ static int gateway_ensure_lan_uplink_locked(struct ds_config *cfg,
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * gateway_wire_client
+/* gateway_wire_client
  *
  * Fully wire ONE gateway-mode client into its delegated LAN, entirely from the
  * host side.  Because the host owns every step - including renaming the peer to
@@ -1118,8 +1156,7 @@ static int gateway_ensure_lan_uplink_locked(struct ds_config *cfg,
  * pin the client's stable MAC, attach the host end to the bridge, then
  * move+rename the peer into the client netns as eth0 (up).  Returns 0 on
  * success.  Caller passes the client's init pid and the confirmed-running
- * gateway's init pid.
- * ---------------------------------------------------------------------------*/
+ * gateway's init pid. */
 
 static int gateway_wire_client(struct ds_config *cfg, pid_t client_pid,
                                pid_t gateway_pid) {
@@ -1212,8 +1249,7 @@ out:
   return ret;
 }
 
-/* ---------------------------------------------------------------------------
- * setup_gateway_veth_side
+/* setup_gateway_veth_side
  *
  * Called at client start.  OpenWrt gateway mode: Droidspaces owns only the L2
  * plumbing (bridge + veths), never NAT/DHCP/DNS/firewall - the gateway
@@ -1224,8 +1260,7 @@ out:
  * client itself when it (re)boots (ds_net_rewire_gateway_clients).  Deferring
  * instead of half-wiring also closes a race - a client started before its
  * gateway must not bake in gateway/LAN settings the user may still edit before
- * the gateway comes up.
- * ---------------------------------------------------------------------------*/
+ * the gateway comes up. */
 
 int setup_gateway_veth_side(struct ds_config *cfg, pid_t child_pid) {
   if (!cfg || !cfg->gateway_container[0]) {
@@ -1251,8 +1286,7 @@ int setup_gateway_veth_side(struct ds_config *cfg, pid_t child_pid) {
   return gateway_wire_client(cfg, child_pid, gw_pid);
 }
 
-/* ---------------------------------------------------------------------------
- * ds_net_rewire_gateway_clients
+/* ds_net_rewire_gateway_clients
  *
  * Gateway self-heal, driven by the gateway itself.  On every boot the gateway
  * container's monitor calls this: it scans the running containers for the ones
@@ -1263,8 +1297,7 @@ int setup_gateway_veth_side(struct ds_config *cfg, pid_t child_pid) {
  *
  * This restores clients after the gateway (re)boots - its old netns died and
  * took the LAN cable with it - and wires clients that were started while the
- * gateway was down.  One actor, no client restart.
- * ---------------------------------------------------------------------------*/
+ * gateway was down.  One actor, no client restart. */
 void ds_net_rewire_gateway_clients(const char *gateway_name,
                                    pid_t gateway_pid) {
   if (!gateway_name || !gateway_name[0] || gateway_pid <= 0)
@@ -1297,8 +1330,7 @@ void ds_net_rewire_gateway_clients(const char *gateway_name,
   closedir(d);
 }
 
-/* ---------------------------------------------------------------------------
- * ds_net_gateway_teardown
+/* ds_net_gateway_teardown
  *
  * Called when a container that ACTS AS A GATEWAY stops.  The gateway-side veth
  * ds-g<hash> lives in the host netns; its peer is the gateway's eth1.  When the
@@ -1314,8 +1346,7 @@ void ds_net_rewire_gateway_clients(const char *gateway_name,
  * bridge once no client veths remain on it.  Per-segment work runs under the
  * same advisory lock client setup/cleanup use, and bridges are de-duplicated
  * since many clients can share one segment.  A no-op for a container that is
- * nobody's gateway.
- * ---------------------------------------------------------------------------*/
+ * nobody's gateway. */
 void ds_net_gateway_teardown(const char *gateway_name) {
   if (!gateway_name || !gateway_name[0])
     return;
@@ -1396,11 +1427,9 @@ void ds_net_gateway_teardown(const char *gateway_name) {
   closedir(d);
 }
 
-/* ---------------------------------------------------------------------------
- * setup_veth_child_side_named
+/* setup_veth_child_side_named
  *
- * Called from internal_boot() INSIDE the container's new network namespace.
- * ---------------------------------------------------------------------------*/
+ * Called from internal_boot() INSIDE the container's new network namespace. */
 
 int setup_veth_child_side_named(struct ds_config *cfg, const char *peer_name,
                                 const char *ip_str) {
@@ -1465,8 +1494,7 @@ int setup_veth_child_side_named(struct ds_config *cfg, const char *peer_name,
 
 /* Compatibility wrapper */
 
-/* ---------------------------------------------------------------------------
- * /etc/resolv.conf wiring (inside container, after pivot_root)
+/* /etc/resolv.conf wiring (inside container, after pivot_root)
  *
  * Single source of truth for the container's resolver. Two cases:
  *
@@ -1482,8 +1510,7 @@ int setup_veth_child_side_named(struct ds_config *cfg, const char *peer_name,
  *      /run/droidspaces/resolv.conf and symlink it.
  *
  * This replaces the old /run/resolvconf duct-tape, which clobbered the distro's
- * resolver and left a dangling symlink in gateway mode.
- * ---------------------------------------------------------------------------*/
+ * resolver and left a dangling symlink in gateway mode. */
 static void setup_resolv_conf(struct ds_config *cfg) {
   const char *target;
 
@@ -1516,9 +1543,7 @@ static void setup_resolv_conf(struct ds_config *cfg) {
             strerror(errno));
 }
 
-/* ---------------------------------------------------------------------------
- * Rootfs-side networking setup (inside container, after pivot_root)
- * ---------------------------------------------------------------------------*/
+/* Rootfs-side networking setup (inside container, after pivot_root) */
 
 int fix_networking_rootfs(struct ds_config *cfg) {
   /* 1. Hostname */
@@ -1582,9 +1607,7 @@ int fix_networking_rootfs(struct ds_config *cfg) {
   return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Runtime introspection
- * ---------------------------------------------------------------------------*/
+/* Runtime introspection */
 
 int detect_ipv6_in_container(pid_t pid) {
   char path[PATH_MAX];
@@ -1599,8 +1622,7 @@ int detect_ipv6_in_container(pid_t pid) {
   return (buf[0] == '0') ? 1 : 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Uplink Route Monitor
+/* Uplink Route Monitor
  *
  * Watches FIB rule, route, link, and IPv4 address changes on the host.
  * When a relevant change is detected it re-probes which uplink is currently
@@ -1615,8 +1637,7 @@ int detect_ipv6_in_container(pid_t pid) {
  *   RTM_NEWADDR / RTM_DELADDR   - IPv4 address assigned or removed
  *
  * A 1.5s heartbeat covers devices with broken netlink notifications and
- * re-asserts ip_forward, which Android periodically resets.
- * ---------------------------------------------------------------------------*/
+ * re-asserts ip_forward, which Android periodically resets. */
 
 /* Last detected uplink interface.  Suppresses the "[NET] active uplink:"
  * log line on every heartbeat - only log when the result changes. */
@@ -1823,6 +1844,37 @@ static void do_uplink_reprobe(void) {
   ds_nl_ctx_t *ctx = ds_nl_open();
   if (!ctx)
     return;
+
+  /* Reconcile our host rules before anything else.
+   *
+   * Android's netd rebuilds its entire netfilter and policy-routing state when
+   * it restarts, and a system_server crash ("soft reboot") is enough to
+   * trigger that.  It flushes the iptables built-in chains and the FIB rule
+   * table wholesale, taking our rules with them, which silently strands every
+   * running container: the policy rules are gone so nothing consults the main
+   * table for 172.28.0.0/16 (the host cannot reach the container at all), and
+   * MASQUERADE / FORWARD ACCEPT are gone so the container cannot reach the
+   * WAN.  The container keeps running and the host's own connectivity comes
+   * back, which is why this looks like a Droidspaces failure.
+   *
+   * Nothing notifies us, so reconcile instead of assuming the one-time setup
+   * survived.  This runs even with no uplink at all, since host <-> container
+   * traffic over the bridge needs the policy rules regardless of WAN state. */
+  install_policy_rules(ctx);
+
+  /* The netfilter set is gated behind a fork-free probe of every rule in it:
+   * ds_ipt_ensure_mss_clamp() and the port-forward helpers shell out to the
+   * iptables binary, so they must not run every cycle.  Only 0 means
+   * "something is definitely missing"; -1 is "tables unreadable", where a
+   * blind reinstall through those binary fallbacks would stack duplicates. */
+  const char *iface = host_filter_iface();
+  if (iface[0] &&
+      ds_ipt_host_rules_present(iface, DS_DEFAULT_SUBNET,
+                                g_host_port_forward_count > 0) == 0) {
+    ds_warn("[NET] Route monitor: host netfilter rules are missing "
+            "(netd restart or firewall app?) - reinstalling");
+    install_netfilter_rules();
+  }
 
   char new_iface[IFNAMSIZ] = {0};
   int new_table = 0;
@@ -2161,9 +2213,7 @@ void ds_net_start_route_monitor(void) {
   pthread_mutex_unlock(&g_gw_mutex);
 }
 
-/* ---------------------------------------------------------------------------
- * Network cleanup (called on container stop)
- * ---------------------------------------------------------------------------*/
+/* Network cleanup (called on container stop) */
 
 void ds_net_cleanup(struct ds_config *cfg, pid_t container_pid) {
   /* If this container is a gateway for others, explicitly tear down the

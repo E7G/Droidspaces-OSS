@@ -12,7 +12,7 @@ package com.droidspaces.app.util
  * is just `current != saved`, and config plumbing can never transpose fields.
  *
  * Note: `name`, `hostname`, `rootfsPath`, sparse-image and runtime fields are
- * NOT part of this state — they are owned by the surrounding screens/ViewModel.
+ * NOT part of this state. They are owned by the surrounding screens/ViewModel.
  */
 data class ContainerConfigState(
     val netMode: String = "nat",
@@ -22,6 +22,7 @@ data class ContainerConfigState(
     val enableGpuMode: Boolean = false,
     val enableTermuxX11: Boolean = false,
     val tx11ExtraFlags: String = "",
+    val enableAnland: Boolean = false,
     val enableVirgl: Boolean = false,
     val virglExtraFlags: String = "",
     val enablePulseaudio: Boolean = false,
@@ -54,6 +55,7 @@ fun ContainerInfo.toConfigState(): ContainerConfigState = ContainerConfigState(
     enableGpuMode = enableGpuMode,
     enableTermuxX11 = enableTermuxX11,
     tx11ExtraFlags = tx11ExtraFlags,
+    enableAnland = enableAnland,
     enableVirgl = enableVirgl,
     virglExtraFlags = virglExtraFlags,
     enablePulseaudio = enablePulseaudio,
@@ -90,6 +92,7 @@ fun ContainerInfo.withConfig(state: ContainerConfigState): ContainerInfo = copy(
     enableGpuMode = state.enableGpuMode,
     enableTermuxX11 = state.enableTermuxX11,
     tx11ExtraFlags = state.tx11ExtraFlags,
+    enableAnland = state.enableAnland,
     enableVirgl = state.enableVirgl,
     virglExtraFlags = state.virglExtraFlags,
     enablePulseaudio = state.enablePulseaudio,

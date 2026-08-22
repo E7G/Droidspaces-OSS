@@ -62,12 +62,10 @@
 #define CLONE_NEWCGROUP 0x02000000
 #endif
 
-/* ---------------------------------------------------------------------------
- * Constants
- * ---------------------------------------------------------------------------*/
+/* Constants */
 
 #define DS_PROJECT_NAME "Droidspaces"
-#define DS_VERSION "6.4.5"
+#define DS_VERSION "6.5.0"
 #define DS_MIN_KERNEL_MAJOR 3
 #define DS_MIN_KERNEL_MINOR 10
 #define DS_RECOMMENDED_KERNEL_MAJOR 4
@@ -175,9 +173,7 @@
 #define C_DIM "\033[2m"
 #define C_BOLD "\033[1m"
 
-/* ---------------------------------------------------------------------------
- * Logging macros & Centralized Engine
- * ---------------------------------------------------------------------------*/
+/* Logging macros & Centralized Engine */
 
 extern int ds_log_silent;
 extern char ds_log_container_name[256];
@@ -194,9 +190,7 @@ int check_ns(int flag, const char *name);
 #define ds_error(fmt, ...) ds_log_internal("-", C_RED, 1, fmt, ##__VA_ARGS__)
 #define ds_die(fmt, ...) ds_die_internal(fmt, ##__VA_ARGS__)
 
-/* ---------------------------------------------------------------------------
- * Data structures
- * ---------------------------------------------------------------------------*/
+/* Data structures */
 
 /* Networking modes */
 
@@ -299,10 +293,7 @@ struct ds_tty_info {
   char name[PATH_MAX]; /* slave device path (e.g. /dev/pts/3) */
 };
 
-/* Container configuration - replaces all global variables */
-/* ---------------------------------------------------------------------------
- * Port forwarding (--port HOST:CONTAINER[/proto])
- * ---------------------------------------------------------------------------*/
+/* Port forwarding (--port HOST:CONTAINER[/proto]) */
 
 #define DS_MAX_PORT_FORWARDS 32
 #define DS_MAX_UPSTREAM_IFACES 32
@@ -315,9 +306,7 @@ struct ds_port_forward {
   char proto[4];               /* "tcp" or "udp"                  */
 };
 
-/* ---------------------------------------------------------------------------
- * Privileged Mode Flags
- * ---------------------------------------------------------------------------*/
+/* Privileged Mode Flags */
 #define DS_PRIV_NOMASK (1 << 0) /* No jail masks (/proc, /sys) */
 #define DS_PRIV_NOCAPS (1 << 1) /* No capability drops */
 #define DS_PRIV_NOSEC (1 << 2)  /* Minimal seccomp only */
@@ -338,6 +327,7 @@ typedef enum {
   DS_INIT_SYSVINIT, /* SIGTERM    */
 } ds_init_type_t;
 
+/* Container configuration - replaces all global variables */
 struct ds_config {
   /* Paths */
   char rootfs_path[PATH_MAX];        /* --rootfs=  */
@@ -365,6 +355,7 @@ struct ds_config {
   int virgl;              /* --virgl (Android only) */
   char *virgl_extra_flags; /* --virgl-flags "..." (heap, NULL if unset) */
   int pulseaudio;          /* --pulse-audio (Android only) */
+  int anland;              /* --anland: embed anland display daemon (Android) */
   int volatile_mode;       /* --volatile */
   int disable_ipv6;        /* --disable-ipv6 */
   int android_storage;     /* --enable-android-storage */
@@ -380,13 +371,15 @@ struct ds_config {
   char prog_name[64];  /* argv[0] for logging */
 
   /* Runtime state */
-  char volatile_dir[PATH_MAX];    /* temporary overlay dir */
-  pid_t container_pid;            /* PID 1 of the container (host view) */
-  pid_t intermediate_pid;         /* intermediate fork pid */
-  pid_t x11_pid;                  /* PID of the Termux-X11 server process */
-  pid_t virgl_pid;                /* PID of the VirGL server process */
-  pid_t pulse_pid;                /* PID of the PulseAudio daemon process */
-  int is_img_mount;               /* 1 if rootfs was loop-mounted from .img */
+  char volatile_dir[PATH_MAX]; /* temporary overlay dir */
+  pid_t container_pid;         /* PID 1 of the container (host view) */
+  pid_t intermediate_pid;      /* intermediate fork pid */
+  pid_t x11_pid;               /* PID of the Termux-X11 server process */
+  pid_t virgl_pid;             /* PID of the VirGL server process */
+  pid_t pulse_pid;             /* PID of the PulseAudio daemon process */
+  pid_t anland_pid;            /* PID of the anland display daemon process */
+  char anland_sock[PATH_MAX];  /* generated host socket for the anland daemon */
+  int is_img_mount;            /* 1 if rootfs was loop-mounted from .img */
   char img_mount_point[PATH_MAX]; /* where the .img was mounted */
   ds_init_type_t init_type;       /* detected container PID 1 init family */
   char custom_init[PATH_MAX]; /* --init=PATH override (default: /sbin/init) */
@@ -449,9 +442,7 @@ struct ds_config {
   unsigned long ns_inode;     /* PID namespace inode for PID-recycling guard */
 };
 
-/* ---------------------------------------------------------------------------
- * utils.c
- * ---------------------------------------------------------------------------*/
+/* utils.c */
 
 void safe_strncpy(char *dst, const char *src, size_t size);
 int ds_parse_iface_csv(const char *val, char ifaces[][IFNAMSIZ], int *count,
@@ -554,9 +545,7 @@ int ds_bridge_termux_socket(const char *leaf, const char *dst,
                             const char *env_key, const char *env_val,
                             const char *label);
 
-/* ---------------------------------------------------------------------------
- * config.c
- * ---------------------------------------------------------------------------*/
+/* config.c */
 
 int ds_config_load(const char *config_path, struct ds_config *cfg);
 int ds_config_load_by_name(const char *name, struct ds_config *cfg);
@@ -576,9 +565,7 @@ void apply_reset_config(struct ds_config *cfg, int cli_net_mode_set,
                         enum ds_net_mode cli_net_mode);
 void parse_privileged(const char *value, struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * android.c
- * ---------------------------------------------------------------------------*/
+/* android.c */
 
 int is_android(void);
 void android_optimizations(int enable);
@@ -590,6 +577,15 @@ int android_seccomp_setup(int is_systemd, int block_nested_ns,
                           int privileged_mask);
 int ds_seccomp_apply_minimal(int privileged_mask, int userns_allowed);
 
+/* KernelSU container-escape hardening: ask KSU to mark the current thread
+ * (TIF_KSU_DISABLE_ESCAPE_WITH_ROOT via KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT)
+ * so escape_with_root_profile() refuses to escalate it.  Best-effort,
+ * silent no-op on non-KSU kernels.  Must run BEFORE ds_seccomp_apply_minimal,
+ * whose magic-reboot block would otherwise deny the very reboot() this uses
+ * to obtain its fd.  The seccomp block is the load-bearing (tree-wide)
+ * barrier; this is per-thread defense-in-depth. */
+void ds_ksu_neutralize_root_escape(void);
+
 /* SELinux + Termux privilege helpers */
 int get_selinux_context(const char *path, char *buf, size_t size);
 const char *ds_extract_mls(const char *ctx);
@@ -598,9 +594,7 @@ void ds_selinux_enter_domain(void);
 int ds_drop_privileges(int uid);
 int ds_resolve_termux_uid(void);
 
-/* ---------------------------------------------------------------------------
- * mount.c
- * ---------------------------------------------------------------------------*/
+/* mount.c */
 
 int domount(const char *src, const char *tgt, const char *fstype,
             unsigned long flags, const char *data);
@@ -622,9 +616,7 @@ int mount_rootfs_img(const char *img_path, char *mount_point, size_t mp_size,
 int unmount_rootfs_img(const char *mount_point, int silent);
 int is_mountpoint(const char *path);
 
-/* ---------------------------------------------------------------------------
- * cgroup.c
- * ---------------------------------------------------------------------------*/
+/* cgroup.c */
 
 int ds_cgroup_v2_usable(void);
 int ds_cgroup_kernel_supports_v2(void);
@@ -646,50 +638,44 @@ void ds_format_size(long long bytes, char *buf, size_t sz);
  * building; wraps the static ctrl_in_list in cgroup.c). */
 int ds_cg_word_in_list(const char *list, const char *name);
 
-/* ---------------------------------------------------------------------------
- * virtualize.c
- * ---------------------------------------------------------------------------*/
+/* virtualize.c */
 
 int ds_virtualize_init(struct ds_config *cfg);
 void ds_virtualize_update(struct ds_config *cfg);
 unsigned long ds_get_pid_ns_inode(pid_t pid);
 
-/* ---------------------------------------------------------------------------
- * hardware.c
- * ---------------------------------------------------------------------------*/
+/* hardware.c */
 
 int scan_host_gpu_gids(gid_t *gids, int max_gids);
 void mirror_gpu_nodes(const char *dev_path);
 int setup_gpu_groups(void);
 int setup_hardware_access(struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * x11.c
- * ---------------------------------------------------------------------------*/
+/* x11.c */
 
 int ds_x11_daemon_start(struct ds_config *cfg);
 void ds_x11_daemon_stop(struct ds_config *cfg);
 int ds_setup_x11_socket(struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * virgl-android.c
- * ---------------------------------------------------------------------------*/
+/* anland/anland.c */
+
+int ds_anland_daemon_start(struct ds_config *cfg);
+void ds_anland_daemon_stop(struct ds_config *cfg);
+int ds_setup_anland_socket(struct ds_config *cfg);
+
+/* virgl-android.c */
 
 int ds_virgl_daemon_start(struct ds_config *cfg);
 void ds_virgl_daemon_stop(struct ds_config *cfg);
 int ds_setup_virgl_socket(struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * pulseaudio-android.c
- * ---------------------------------------------------------------------------*/
+/* pulseaudio-android.c */
 
 int ds_pulse_daemon_start(struct ds_config *cfg);
 void ds_pulse_daemon_stop(struct ds_config *cfg);
 int ds_setup_pulse_socket(struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * network.c
- * ---------------------------------------------------------------------------*/
+/* network.c */
 
 int fix_networking_host(struct ds_config *cfg);
 int fix_networking_rootfs(struct ds_config *cfg);
@@ -728,9 +714,7 @@ void parse_cidr(const char *cidr, uint32_t *ip_out, uint32_t *mask_out);
 int ds_get_dns_servers(const char *custom_dns, char *out, size_t size);
 int detect_ipv6_in_container(pid_t pid);
 
-/* ---------------------------------------------------------------------------
- * ds_netlink.c
- * ---------------------------------------------------------------------------*/
+/* ds_netlink.c */
 
 ds_nl_ctx_t *ds_nl_open(void);
 void ds_nl_close(ds_nl_ctx_t *ctx);
@@ -769,22 +753,21 @@ int ds_nl_list_ifaces(ds_nl_ctx_t *ctx, char names[][IFNAMSIZ], int max);
 /* Kernel capability probe - call before any NAT setup */
 int ds_nl_probe_nat_capability(char *reason, size_t rsz);
 
-/* ---------------------------------------------------------------------------
- * ds_iptables.c
- * ---------------------------------------------------------------------------*/
+/* ds_iptables.c */
 
 int ds_ipt_ensure_masquerade(const char *src_cidr);
+int ds_ipt_host_rules_present(const char *iface, const char *src_cidr,
+                              int expect_dnat);
 int ds_ipt_ensure_forward_accept(const char *iface);
 int ds_ipt_ensure_input_accept(const char *iface);
 int ds_ipt_ensure_mss_clamp(void);
 int ds_ipt_remove_iface_rules(const char *iface);
 int ds_ipt_remove_ds_rules(void);
-int ds_ipt_add_portforwards(struct ds_config *cfg, const char *container_ip);
+int ds_ipt_add_portforwards(struct ds_port_forward *pfs, int count,
+                            const char *container_ip);
 int ds_ipt_remove_portforwards(struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * Static NAT IP management (network.c)
- * ---------------------------------------------------------------------------*/
+/* Static NAT IP management (network.c) */
 
 /* Validate a user-supplied static NAT IP string.
  * Must be a valid IPv4 address inside DS_DEFAULT_SUBNET (172.28.0.0/16),
@@ -807,9 +790,7 @@ int ds_net_check_ip_collision(const char *ip_str, const char *exclude_name);
  * Callers must save config after this returns to persist the result. */
 void ds_net_resolve_static_ip(struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * ds_dhcp.c
- * ---------------------------------------------------------------------------*/
+/* ds_dhcp.c */
 
 /* Start a single-lease DHCP server on veth_host (detached monitor thread).
  * Offers offer_ip_be to any DHCP client that broadcasts on the interface.
@@ -823,9 +804,7 @@ void ds_dhcp_server_start(struct ds_config *cfg, const char *veth_host,
  */
 void ds_dhcp_server_stop(void);
 
-/* ---------------------------------------------------------------------------
- * terminal.c
- * ---------------------------------------------------------------------------*/
+/* terminal.c */
 
 int ds_openpty(int *master, int *slave, char *name);
 int ds_terminal_create(struct ds_tty_info *tty);
@@ -834,16 +813,12 @@ int ds_terminal_make_controlling(int fd);
 int ds_setup_tios(int fd, struct termios *old);
 int ds_terminal_proxy(int master_fd);
 
-/* ---------------------------------------------------------------------------
- * console.c
- * ---------------------------------------------------------------------------*/
+/* console.c */
 
 int console_monitor_loop(int console_master_fd, pid_t monitor_pid,
                          struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * pid.c
- * ---------------------------------------------------------------------------*/
+/* pid.c */
 
 const char *get_workspace_dir(void);
 const char *get_pids_dir(void);
@@ -877,25 +852,19 @@ int check_pulse_needs(void);
 int ds_feature_needs(size_t cfg_flag_offset);
 void write_plain_env_file(const char *src, const char *dst);
 
-/* ---------------------------------------------------------------------------
- * boot.c
- * ---------------------------------------------------------------------------*/
+/* boot.c */
 
 void ds_apply_capability_hardening(int hw_access, int privileged_mask);
 int internal_boot(struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * environment.c
- * ---------------------------------------------------------------------------*/
+/* environment.c */
 
 void load_etc_environment(void);
 void ds_env_boot_setup(struct ds_config *cfg);
 void ds_env_save(const char *path, struct ds_config *cfg);
 void parse_env_file_to_config(const char *path, struct ds_config *cfg);
 
-/* ---------------------------------------------------------------------------
- * container.c
- * ---------------------------------------------------------------------------*/
+/* container.c */
 
 int is_valid_container_pid(pid_t pid);
 int start_rootfs(struct ds_config *cfg);
@@ -911,24 +880,18 @@ int show_container_usage(struct ds_config *cfg);
 int restart_rootfs(struct ds_config *cfg);
 int restart_rootfs_with_timeout(struct ds_config *cfg, int timeout_seconds);
 
-/* ---------------------------------------------------------------------------
- * documentation.c
- * ---------------------------------------------------------------------------*/
+/* documentation.c */
 
 void print_documentation(const char *argv0);
 
-/* ---------------------------------------------------------------------------
- * check.c
- * ---------------------------------------------------------------------------*/
+/* check.c */
 
 int is_dangerous_node(const char *name);
 int check_requirements(void);
 int check_requirements_hw(int hw_access);
 int check_requirements_detailed(void);
 
-/* ---------------------------------------------------------------------------
- * daemon.c - daemon, client, and probe entry points
- * ---------------------------------------------------------------------------*/
+/* daemon.c - daemon, client, and probe entry points */
 
 int ds_daemon_run(int foreground, char **argv);
 int ds_client_run(int argc, char **argv);

@@ -24,14 +24,17 @@ import com.droidspaces.app.util.ContainerOSInfoManager
 import com.droidspaces.app.util.IconUtils
 
 /**
- * Container card for Panel tab — shows container name, OS info, resource usage, and quick actions.
+ * Container card for the Panel tab. Shows container name, OS info, resource usage, and quick actions.
  * Receives fully-populated OSInfo from SystemStatsViewModel (single polling source).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RunningContainerCard(
     container: ContainerInfo,
     onEnter: () -> Unit = {},
     onTerminalClick: () -> Unit = {},
+    anlandEnabled: Boolean = false,
+    onLaunchAnland: () -> Unit = {},
     osInfo: ContainerOSInfoManager.OSInfo? = null,
     modifier: Modifier = Modifier
 ) {
@@ -72,6 +75,39 @@ fun RunningContainerCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
+
+                // Small "anland" pill next to the terminal button, shown only when
+                // this container has the anland display daemon enabled and a live
+                // socket recorded.
+                if (anlandEnabled) {
+                    Surface(
+                        onClick = onLaunchAnland,
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.height(30.dp).clip(RoundedCornerShape(12.dp)),
+                        tonalElevation = 0.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DesktopWindows,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "anland",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
 
                 val sessionCount by remember(container.name) {
                     derivedStateOf {
@@ -130,7 +166,7 @@ fun RunningContainerCard(
             )
 
 
-            // Resource usage row — only shown when we have real data
+            // Resource usage row, only shown when we have real data
             val ramUsedKb = ((osInfo?.ramUsageMb ?: 0L) * 1024L)
             val cpuPercent = osInfo?.cpuUsage ?: -1.0
             if (ramUsedKb > 0 || cpuPercent >= 0.0) {
@@ -140,10 +176,14 @@ fun RunningContainerCard(
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
                 ) {
-                    Row(
+                    // FlowRow, not Row: on a narrow display (watch, small phone, or a
+                    // locale with longer labels) CPU and RAM do not fit side by side.
+                    // A Row would hand RAM whatever sliver is left and shred its text;
+                    // this drops it onto a second line instead.
+                    FlowRow(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         if (cpuPercent >= 0.0) {
                             Row(

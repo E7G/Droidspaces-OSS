@@ -63,7 +63,8 @@ fun InstallationSummaryScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 24.dp),
+                .padding(horizontal = 24.dp)
+                .padding(top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
@@ -100,11 +101,13 @@ fun InstallationSummaryScreen(
                         SummaryItem(stringResource(R.string.static_ip_address), config.staticNatIp, Icons.Default.NetworkCheck)
                     }
                     if (config.useSparseImage && config.sparseImageSizeGB != null) {
-                        SummaryItem(stringResource(R.string.storage_configuration), "${stringResource(R.string.sparse_image_configuration)} (${config.sparseImageSizeGB}GB)", Icons.Default.Storage)
+                        SummaryItem(stringResource(R.string.storage_configuration), "${stringResource(R.string.sparse_image_section)} (${config.sparseImageSizeGB}GB)", Icons.Default.Storage)
                     } else {
                         SummaryItem(stringResource(R.string.storage_configuration), stringResource(R.string.directory_label), Icons.Default.Folder)
                     }
-                    SummaryItem(stringResource(R.string.installation_path_label), "${Constants.CONTAINERS_BASE_PATH}/${com.droidspaces.app.util.ContainerManager.sanitizeContainerName(config.name)}", Icons.Default.Folder)
+                    // Derived from the resolved rootfs, not from the name, so a container
+                    // installed on another volume is not reported as living under /data.
+                    SummaryItem(stringResource(R.string.installation_path_label), config.rootfsPath.substringBeforeLast('/'), Icons.Default.Folder)
 
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -124,6 +127,7 @@ fun InstallationSummaryScreen(
                     if (config.enableHwAccess) SummaryItem(stringResource(R.string.hardware_access), stringResource(R.string.enabled_legend), Icons.Default.Devices)
                     if (!config.enableHwAccess && config.enableGpuMode) SummaryItem(stringResource(R.string.gpu_access), stringResource(R.string.enabled_legend), Icons.Default.Memory)
                     if (config.enableTermuxX11) SummaryItem(stringResource(R.string.termux_x11), stringResource(R.string.enabled_legend), painterResource(id = R.drawable.ic_x11))
+                    if (config.enableAnland) SummaryItem(stringResource(R.string.enable_anland), stringResource(R.string.enabled_legend), Icons.Default.DesktopWindows)
                     if (config.enableVirgl) SummaryItem(stringResource(R.string.enable_virgl), stringResource(R.string.enabled_legend), Icons.Default.Layers)
                     if (config.enablePulseaudio) SummaryItem(stringResource(R.string.enable_pulseaudio), stringResource(R.string.enabled_legend), Icons.AutoMirrored.Filled.VolumeUp)
                     if (config.selinuxPermissive) SummaryItem(stringResource(R.string.selinux_permissive), stringResource(R.string.enabled_legend), Icons.Default.Security)
@@ -159,7 +163,7 @@ fun InstallationSummaryScreen(
                         !config.enableHwAccess && !config.enableGpuMode && !config.selinuxPermissive &&
                         !config.allowUserns && !config.volatileMode && config.bindMounts.isEmpty() &&
                         !config.runAtBoot && !config.disableIPv6 &&
-                        !config.enableTermuxX11 && !config.enableVirgl && !config.enablePulseaudio &&
+                        !config.enableTermuxX11 && !config.enableAnland && !config.enableVirgl && !config.enablePulseaudio &&
                         !config.forceCgroupv1 && !config.blockNestedNs &&
                         config.upstreamInterfaces.isEmpty() && config.portForwards.isEmpty() &&
                         config.envFileContent.isNullOrBlank()) {
