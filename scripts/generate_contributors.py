@@ -1,129 +1,131 @@
 #!/usr/bin/env python3
-"""One-shot CI patcher for restoring the Anland launch icon.
+"""
+Generate contributors.json for the Droidspaces Android app.
+Run before building the APK:
 
-This file restores itself from the parent commit before committing the actual
-source changes, so it never remains in the final tree.
+    GITHUB_TOKEN=ghp_xxx python3 scripts/generate_contributors.py
+
+Requires: pip install requests
 """
 
-from pathlib import Path
+import base64
+import json
+import os
 import re
-import subprocess
+from collections import defaultdict
+
+import requests
+
+REPO   = "ravindu644/Droidspaces-OSS"
+OUTPUT = os.path.join(os.path.dirname(__file__),
+                      "../Android/app/src/main/assets/contributors.json")
+TOKEN  = os.environ.get("GITHUB_TOKEN", "")
+HDRS   = {
+    "Accept": "application/vnd.github+json",
+    **({"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}),
+}
+BOTS        = {"weblate", "copilot"}
+COAUTHOR_RE = re.compile(r"co-authored-by:\s*.+?\s*<([^>]+)>", re.IGNORECASE)
+NOREPLY_RE  = re.compile(r"(\d+)\+(.+)@users\.noreply\.github\.com")
 
 
-def run(*args: str) -> None:
-    subprocess.run(args, check=True)
+def paginate(url):
+    params = {"per_page": 100}
+    while url:
+        r = requests.get(url, headers=HDRS, params=params)
+        r.raise_for_status()
+        yield from r.json()
+        url    = r.links.get("next", {}).get("url")
+        params = {}
 
 
-card_path = Path("Android/app/src/main/java/com/droidspaces/app/ui/component/ContainerCard.kt")
-card = card_path.read_text()
+def resolve_noreply(email):
+    """Fast-path: extract login directly from noreply address."""
+    m = NOREPLY_RE.match(email)
+    if not m:
+        return None
+    r = requests.get(f"https://api.github.com/users/{m.group(2)}", headers=HDRS)
+    if r.ok:
+        u = r.json()
+        return u["login"], u["avatar_url"]
+    return None
 
-old = "    val onShowLogs: () -> Unit = {},\n)"
-new = "    val onShowLogs: () -> Unit = {},\n    val onLaunchAnland: () -> Unit = {},\n)"
-assert old in card, "ContainerCardActions anchor missing"
-card = card.replace(old, new, 1)
 
-old = "    val onShowLogs = actions.onShowLogs\n"
-new = "    val onShowLogs = actions.onShowLogs\n    val onLaunchAnland = actions.onLaunchAnland\n"
-assert old in card, "ContainerCard callback anchor missing"
-card = card.replace(old, new, 1)
+def resolve_email(email):
+    """Search GitHub by email (works only for publicly linked emails)."""
+    resolved = resolve_noreply(email)
+    if resolved:
+        return resolved
+    r = requests.get("https://api.github.com/search/users",
+                     headers=HDRS, params={"q": f"{email} in:email"})
+    if r.ok:
+        items = r.json().get("items", [])
+        if items:
+            return items[0]["login"], items[0]["avatar_url"]
+    return None
 
-pattern = re.compile(
-    r"(\s+horizontalArrangement = Arrangement\.spacedBy\(8\.dp\)\n\s+\) \{\n)"
-    r"(\s+IconButton\(onClick = onShowLogs,)"
-)
-replacement = r'''\1                    if (container.enableAnland) {
-                        IconButton(
-                            onClick = onLaunchAnland,
-                            enabled = container.isRunning && !isOperationRunning,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.DesktopWindows,
-                                contentDescription = context.getString(R.string.launch_anland_window),
-                                tint = if (container.isRunning)
-                                    MaterialTheme.colorScheme.secondary
-                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
 
-\2'''
-card, count = pattern.subn(replacement, card, count=1)
-assert count == 1, f"Anland icon anchor matched {count} times"
-card_path.write_text(card)
+def avatar_b64(url):
+    sep = "&" if "?" in url else "?"
+    r = requests.get(f"{url}{sep}s=48", headers={"Accept": "image/png"})
+    r.raise_for_status()
+    return base64.b64encode(r.content).decode()
 
-screen_path = Path("Android/app/src/main/java/com/droidspaces/app/ui/screen/ContainersScreen.kt")
-screen = screen_path.read_text()
 
-old = "import com.droidspaces.app.util.ContainerInfo\n"
-new = old + "import com.droidspaces.app.util.ContainerManager\nimport com.droidspaces.app.util.AnlandUtils\n"
-assert old in screen, "ContainersScreen import anchor missing"
-screen = screen.replace(old, new, 1)
+def main():
+    print(f"Fetching commits for {REPO}...")
+    contribs = defaultdict(lambda: {"commits": 0, "avatar_url": None})
 
-old = "import kotlinx.coroutines.launch\n"
-new = old + "import kotlinx.coroutines.delay\n"
-assert old in screen, "Coroutine import anchor missing"
-screen = screen.replace(old, new, 1)
+    def add(login, avatar_url):
+        if login.lower() in BOTS:
+            return
+        contribs[login]["commits"] += 1
+        if not contribs[login]["avatar_url"]:
+            contribs[login]["avatar_url"] = avatar_url
 
-pattern = re.compile(
-    r"(\s+onShowLogs\s*=\s*\{\s*opsViewModel\.showLogViewerFor = container\.name\s*\},)",
-    re.MULTILINE,
-)
-callback = r'''\1
-                            onLaunchAnland = {
-                                scope.launch {
-                                    var socket: String? = null
-                                    for (attempt in 0 until 10) {
-                                        socket = ContainerManager.getAnlandSocket(container.name)
-                                        if (socket != null) break
-                                        delay(200)
-                                    }
-                                    socket?.let {
-                                        AnlandUtils.launchWindow(context, container.name, it)
-                                    } ?: snackbarHostState.showSnackbar(
-                                        context.getString(R.string.anland_socket_not_ready),
-                                        duration = SnackbarDuration.Short
-                                    )
-                                }
-                            },'''
-screen, count = pattern.subn(callback, screen, count=1)
-assert count == 1, f"Anland callback anchor matched {count} times"
-screen_path.write_text(screen)
+    for commit in paginate(f"https://api.github.com/repos/{REPO}/commits"):
+        author     = commit.get("author")
+        git_author = commit.get("commit", {}).get("author", {})
+        message    = commit.get("commit", {}).get("message", "")
 
-strings_path = Path("Android/app/src/main/res/values/strings.xml")
-strings = strings_path.read_text()
-old = '    <string name="anland_not_installed">Anland consumer app is not installed</string>\n'
-assert old in strings, "Base Anland string anchor missing"
-strings_path.write_text(
-    strings.replace(
-        old,
-        old + '    <string name="anland_socket_not_ready">Anland display socket is not ready yet. Make sure the container is running.</string>\n',
-        1,
-    )
-)
+        # Linked GitHub user
+        if author and author.get("type") != "Bot":
+            add(author["login"], author["avatar_url"])
+        # Unlinked --author email fallback
+        elif not author and git_author.get("email"):
+            resolved = resolve_email(git_author["email"])
+            if resolved:
+                add(*resolved)
 
-zh_path = Path("Android/app/src/main/res/values-zh-rCN/strings.xml")
-zh = zh_path.read_text()
-additions = (
-    '    <string name="launch_anland_window">打开 Anland</string>\n'
-    '    <string name="anland_not_installed">未安装 Anland 应用</string>\n'
-    '    <string name="anland_socket_not_ready">Anland 显示服务尚未就绪，请确认容器已启动。</string>\n'
-)
-for key in ("launch_anland_window", "anland_not_installed", "anland_socket_not_ready"):
-    assert f'name="{key}"' not in zh, f"{key} already exists in zh strings"
-assert "</resources>" in zh
-zh_path.write_text(zh.replace("</resources>", additions + "</resources>", 1))
+        # Co-authored-by trailers
+        for email in COAUTHOR_RE.findall(message):
+            resolved = resolve_email(email)
+            if resolved:
+                add(*resolved)
 
-# Restore this one-shot patcher from its parent and remove the abandoned
-# temporary workflow, leaving only the real product changes in the commit.
-run("git", "checkout", "HEAD^", "--", "scripts/generate_contributors.py")
-workflow = Path(".github/workflows/apply-anland-icon-fix.yml")
-if workflow.exists():
-    run("git", "rm", str(workflow))
+    print(f"Resolved {len(contribs)} contributors. Fetching avatars...")
+    result = []
+    for login, data in sorted(contribs.items(),
+                               key=lambda x: x[1]["commits"], reverse=True):
+        b64 = ""
+        if data["avatar_url"]:
+            try:
+                b64 = avatar_b64(data["avatar_url"])
+            except Exception as e:
+                print(f"  Warning: avatar failed for {login}: {e}")
+        result.append({
+            "login":      login,
+            "commits":    data["commits"],
+            "github_url": f"https://github.com/{login}",
+            "avatar_b64": b64,
+        })
+        print(f"  {login}: {data['commits']} commits")
 
-run("git", "config", "user.name", "github-actions[bot]")
-run("git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")
-run("git", "add", "Android", "scripts/generate_contributors.py")
-run("git", "commit", "-m", "feat: restore one-tap Anland launch icon")
-run("git", "push", "origin", "HEAD:main")
+    os.makedirs(os.path.dirname(os.path.abspath(OUTPUT)), exist_ok=True)
+    with open(OUTPUT, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"\nWrote {len(result)} contributors → {OUTPUT}")
+
+
+if __name__ == "__main__":
+    main()
