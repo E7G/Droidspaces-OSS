@@ -1,0 +1,59 @@
+name: Dispatch Anland Icon Test Release
+
+on:
+  push:
+    branches:
+      - release/anland-icon-r2
+    paths:
+      - .github/workflows/release-anland-icon-r2.yml
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/anland-icon-r2
+          fetch-depth: 0
+
+      - name: Dispatch official Droidspaces CI release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='compat-test-20260823-r2'
+          before=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow ci.yml --branch main --event workflow_dispatch --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')
+
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f create_release=true \
+            -f tag_name="$tag"
+
+          run_id=''
+          for i in $(seq 1 60); do
+            candidate=$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow ci.yml --branch main --event workflow_dispatch --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty')
+            if [ -n "$candidate" ] && [ "$candidate" != "$before" ]; then
+              run_id="$candidate"
+              break
+            fi
+            sleep 5
+          done
+          test -n "$run_id"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+
+          release_url=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
+          test -n "$release_url"
+          printf '%s\n' "$release_url" > .release-ok
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .release-ok
+          git commit -m "ci: record Anland icon test release"
+          git push origin HEAD:release/anland-icon-r2
