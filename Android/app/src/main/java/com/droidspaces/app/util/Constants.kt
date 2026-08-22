@@ -23,7 +23,7 @@ object Constants {
     const val DAEMON_MODE_FILE = "/data/local/Droidspaces/.daemon_mode"
     const val DAEMON_PID_FILE = "/data/local/Droidspaces/droidspacesd.pid"
     const val CONTAINER_CONFIG_FILE = "container.config"
-    // Default network mode — the single source of truth for both the ContainerInfo
+    // Default network mode, the single source of truth for both the ContainerInfo
     // model default and the config parser default (they used to disagree).
     const val DEFAULT_NET_MODE = "nat"
 
@@ -43,6 +43,7 @@ object Constants {
     const val KEY_AMOLED_MODE = "amoled_mode"
     const val KEY_USE_DYNAMIC_COLOR = "use_dynamic_color"
     const val KEY_THEME_PALETTE = "theme_palette"
+    const val KEY_TERMINAL_DARK_THEME = "terminal_dark_theme"
     const val KEY_APP_LOCALE = "app_locale"
     const val KEY_BACKEND_MODE = "backend_mode"
     const val KEY_DAEMON_MODE_ENABLED = "daemon_mode_enabled"

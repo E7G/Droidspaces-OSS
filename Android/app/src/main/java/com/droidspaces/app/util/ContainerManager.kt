@@ -46,6 +46,7 @@ data class ContainerInfo(
     val dnsServers: String = "",
     val runAtBoot: Boolean = false,
     val runAtBootPriority: Int = 0,
+    val enableAnland: Boolean = false,
     val status: ContainerStatus = ContainerStatus.STOPPED,
     val pid: Int? = null,
     val useSparseImage: Boolean = false,
@@ -106,6 +107,7 @@ data class ContainerInfo(
         if (runAtBoot && runAtBootPriority > 0) {
             appendLine("run_at_boot_priority=$runAtBootPriority")
         }
+        appendLine("enable_anland=${if (enableAnland) "1" else "0"}")
         appendLine("force_cgroupv1=${if (forceCgroupv1) "1" else "0"}")
         appendLine("block_nested_ns=${if (blockNestedNs) "1" else "0"}")
         if (netMode == "nat" && staticNatIp.isNotEmpty()) {
@@ -161,16 +163,27 @@ object ContainerManager {
 
     /**
      * Get the rootfs path for a container (LXC-style: /rootfs subdirectory).
+     *
+     * [baseDir] relocates the bulk data to a chosen volume. The container's own directory
+     * under CONTAINERS_BASE_PATH still holds the config, .env and pidfile, so a container
+     * stays discoverable when its storage is unplugged. The <baseDir>/<name>/ level is kept
+     * so two containers can share one destination without colliding.
      */
-    fun getRootfsPath(name: String): String {
-        return "${getContainerDirectory(name)}/rootfs"
+    fun getRootfsPath(name: String, baseDir: String? = null): String {
+        return "${storageBase(baseDir, name)}/rootfs"
     }
 
     /**
-     * Get the sparse image path for a container.
+     * Get the sparse image path for a container. See [getRootfsPath] for [baseDir].
      */
-    fun getSparseImagePath(name: String): String {
-        return "${getContainerDirectory(name)}/rootfs.img"
+    fun getSparseImagePath(name: String, baseDir: String? = null): String {
+        return "${storageBase(baseDir, name)}/rootfs.img"
+    }
+
+    private fun storageBase(baseDir: String?, name: String): String {
+        val trimmed = baseDir?.trim()?.trimEnd('/')
+        return if (trimmed.isNullOrEmpty()) getContainerDirectory(name)
+        else "$trimmed/${sanitizeContainerName(name)}"
     }
 
     /**
@@ -232,6 +245,62 @@ object ContainerManager {
     }
 
     /**
+     * Remove a rootfs stored outside the container directory, then the folder we made for
+     * it if nothing else is left in there.
+     *
+     * The path comes out of a config file, so this is an rm -rf whose target is not fully
+     * under our control. It therefore only ever deletes an entry named exactly "rootfs" or
+     * "rootfs.img", the two names the installer creates. A hand-edited config pointing at
+     * someone's existing image is reported and left alone rather than deleted, and a
+     * truncated or malicious value like "/" or "/data" cannot match at all.
+     *
+     * The parent is removed with a plain rmdir, which fails harmlessly when it still holds
+     * anything, so a shared destination folder never takes other containers down with it.
+     */
+    private suspend fun deleteExternalRootfs(rootfsPath: String, logger: ContainerLogger) {
+        val name = rootfsPath.substringAfterLast('/')
+        if (name != "rootfs" && name != "rootfs.img") {
+            logger.w("Rootfs at $rootfsPath is not named rootfs or rootfs.img, so it was not")
+            logger.w("created by Droidspaces. Leaving it in place, remove it by hand if you")
+            logger.w("no longer need it.")
+            return
+        }
+
+        val quoted = ContainerCommandBuilder.quote(rootfsPath)
+        val result = Shell.cmd("rm -rf $quoted 2>&1").exec()
+        (result.out + result.err).forEach { line ->
+            line.trim().takeIf { it.isNotEmpty() }?.let { logger.i(it) }
+        }
+        if (!result.isSuccess) {
+            // The volume may simply be unplugged. Say so and carry on: refusing to
+            // uninstall would leave the container listed with no way to remove it.
+            logger.w("Could not delete $rootfsPath (exit code: ${result.code}).")
+            logger.w("If its storage is disconnected, delete it by hand once reattached.")
+            return
+        }
+        logger.i("Rootfs deleted.")
+
+        val parent = rootfsPath.substringBeforeLast('/', "")
+        if (parent.isNotEmpty()) {
+            Shell.cmd("rmdir ${ContainerCommandBuilder.quote(parent)} 2>/dev/null").exec()
+        }
+    }
+
+    /**
+     * The rootfs path as recorded in the container's own config, which is the only
+     * authoritative copy. A container installed to a custom location cannot be derived
+     * from its name, and the backend rewrites this file on every start, so an in-memory
+     * ContainerInfo can be stale by the time an operation runs.
+     *
+     * Returns null when the config is missing or carries no rootfs_path, so callers can
+     * refuse rather than guess.
+     */
+    suspend fun readRootfsPath(name: String): String? = withContext(Dispatchers.IO) {
+        val configPath = "${getContainerDirectory(name)}/${Constants.CONTAINER_CONFIG_FILE}"
+        loadContainerConfig(configPath, name)?.rootfsPath?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * Load container configuration from config file.
      */
     private fun loadContainerConfig(configPath: String, defaultName: String): ContainerInfo? {
@@ -274,7 +343,7 @@ object ContainerManager {
             // Build ContainerInfo from config
             val containerName = configMap["name"] ?: defaultName
             // Drop a container whose on-disk name carries shell metacharacters before
-            // it can reach a root command (VULN V10). Over-length-but-safe names still load.
+            // it can reach a root command. Over-length-but-safe names still load.
             if (!ValidationUtils.isSafeContainerName(containerName)) {
                 android.util.Log.w("ContainerManager", "Skipping container with unsafe name in config")
                 return null
@@ -335,6 +404,7 @@ object ContainerManager {
                 dnsServers = configMap["dns_servers"] ?: "",
                 runAtBoot = configMap["run_at_boot"] == "1",
                 runAtBootPriority = configMap["run_at_boot_priority"]?.toIntOrNull() ?: 0,
+                enableAnland = configMap["enable_anland"] == "1",
                 status = ContainerStatus.STOPPED,
                 useSparseImage = useSparseImage,
                 sparseImageSizeGB = sparseImageSizeGB,
@@ -425,6 +495,24 @@ object ContainerManager {
     private val ANSI_ESCAPE = Regex("\\u001B\\[[;\\d]*m")
 
     /**
+     * Return the anland display-daemon socket path for a running container, or
+     * null if it isn't running / anland isn't active. The native runtime records
+     * the generated per-container socket path in Pids/<name>.anland at start and
+     * removes it on stop, so the presence of a non-empty path also signals that
+     * the anland window can be launched.
+     */
+    suspend fun getAnlandSocket(containerName: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val path = "${Constants.PIDS_BASE_PATH}/$containerName.anland"
+            val result = Shell.cmd("cat ${ContainerCommandBuilder.quote(path)} 2>/dev/null").exec()
+            val sock = result.out.firstOrNull()?.trim()
+            if (result.isSuccess && !sock.isNullOrEmpty()) sock else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
      * Get container info by name.
      * Note: name should be the sanitized directory name (spaces replaced with dashes).
      */
@@ -487,7 +575,7 @@ object ContainerManager {
         newConfig: ContainerInfo
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // Reject control chars in single-line config values (VULN V11).
+            // Reject control chars in single-line config values.
             ValidationUtils.validateConfigValues(newConfig).errorMessage?.let {
                 return@withContext Result.failure(Exception(it))
             }
@@ -615,10 +703,20 @@ object ContainerManager {
                 logger.i("")
             }
 
-            // Step 2: Delete the container directory
-            logger.i("Step 2: Deleting container directory...")
-            // Delete the parent directory (which contains rootfs and config)
+            // Step 2: Delete the rootfs if it lives outside the container directory.
             val containerPath = getContainerDirectory(container.name)
+            val rootfsPath = readRootfsPath(container.name) ?: container.rootfsPath
+
+            if (rootfsPath.isNotBlank() && !rootfsPath.startsWith("$containerPath/")) {
+                logger.i("Step 2: Deleting rootfs at custom location...")
+                logger.i("Rootfs path: $rootfsPath")
+                deleteExternalRootfs(rootfsPath, logger)
+                logger.i("")
+            }
+
+            // Step 3: Delete the container directory
+            logger.i("Step 3: Deleting container directory...")
+            // Delete the parent directory (which contains rootfs and config)
             logger.i("Container path: $containerPath")
 
             // Use rm -rf to recursively delete the entire container directory

@@ -15,7 +15,7 @@
 #define MAX_EVENTS 16
 /* Hello fd set: { buf_ready, fence, data, shm, audio }. The daemon only relays
  * the fds; it never interprets the slots. */
-#define MAX_FDS 5
+#define MAX_FDS DISPLAY_DEPOSITED_FD_COUNT
 
 struct client {
   int ctrl_fd;
@@ -149,7 +149,7 @@ static void handle_client_data(daemon_ctx *ctx, struct client *c) {
 
   switch (hdr.type) {
   case CTRL_MSG_CONSUMER_HELLO:
-    if (c == ctx->consumer && fd_count >= MAX_FDS - 1) {
+    if (c == ctx->consumer && fd_count == MAX_FDS) {
       clear_deposited_fds(ctx);
       memcpy(ctx->deposited_fds, fds, sizeof(int) * fd_count);
       ctx->deposited_fd_count = fd_count;

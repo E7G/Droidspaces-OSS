@@ -30,7 +30,7 @@ Anland 是 Droidspaces 的可选 Wayland 显示方案。它通过一套缓冲区
 在配置 Anland 之前，请先确认满足以下条件：
 
 1. **支持 Droidspaces 的 Android 设备**：Anland 与 Droidspaces 配合使用，需要在容器配置中启用 `Anland Display`。
-2. **支持 Anland 的显示后端**：需要使用打过 Anland 补丁的合成器后端。目前主要支持 `KWin`，相关后端可参考 [Anland producers 目录](https://github.com/superturtlee/anland/tree/main/producers)。
+2. **支持 Anland 的显示后端**：需要使用打过 Anland 补丁的合成器后端。目前主要支持 `KWin`，相关后端可参考 [Anland producers 目录](https://github.com/E7G/anland/tree/main/producers)。
 3. **推荐高通 Snapdragon / Adreno 设备**：Anland 更依赖设备侧 GPU 与缓冲区共享能力，高通平台通常兼容性更好。
 
 > [!NOTE]
@@ -56,7 +56,7 @@ Anland 是 Droidspaces 的可选 Wayland 显示方案。它通过一套缓冲区
 2. **拉取 Anland 源码。**
 
    ```bash
-   git clone https://github.com/superturtlee/anland.git
+   git clone https://github.com/E7G/anland.git
    ```
 
 3. **在 `producers` 目录中选择对应的桌面环境和发行版。**
@@ -109,7 +109,7 @@ Anland 是 Droidspaces 的可选 Wayland 显示方案。它通过一套缓冲区
 
 ## 第 2 步：安装 Anland 应用
 
-1. 从 [Anland 最新发布版本](https://github.com/superturtlee/anland/releases/latest) 下载 **Anland APK**。
+1. 从 [Anland 最新发布版本](https://github.com/E7G/anland/releases/latest) 下载 **Anland APK**。
 2. 在 Android 设备上安装 APK。
 3. 首次启动时授予 Anland **Root 权限**。
 
