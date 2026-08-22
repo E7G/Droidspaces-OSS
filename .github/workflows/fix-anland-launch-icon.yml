@@ -1,0 +1,128 @@
+name: Apply Anland launch icon fix
+
+on:
+  push:
+    branches:
+      - fix/anland-launch-icon
+    paths:
+      - .github/workflows/fix-anland-launch-icon.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/anland-launch-icon
+          fetch-depth: 0
+
+      - name: Add one-tap Anland launch action
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          card_path = Path('Android/app/src/main/java/com/droidspaces/app/ui/component/ContainerCard.kt')
+          card = card_path.read_text()
+
+          old = '    val onShowLogs: () -> Unit = {},\n)'
+          new = '    val onShowLogs: () -> Unit = {},\n    val onLaunchAnland: () -> Unit = {},\n)'
+          assert old in card, 'ContainerCardActions anchor not found'
+          card = card.replace(old, new, 1)
+
+          old = '    val onShowLogs = actions.onShowLogs\n'
+          new = '    val onShowLogs = actions.onShowLogs\n    val onLaunchAnland = actions.onLaunchAnland\n'
+          assert old in card, 'ContainerCard callback anchor not found'
+          card = card.replace(old, new, 1)
+
+          pattern = re.compile(r'(\s+horizontalArrangement = Arrangement\.spacedBy\(8\.dp\)\n\s+\) \{\n)(\s+IconButton\(onClick = onShowLogs,)')
+          replacement = r'''\1                    if (container.enableAnland) {
+                        IconButton(
+                            onClick = onLaunchAnland,
+                            enabled = container.isRunning && !isOperationRunning,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.DesktopWindows,
+                                contentDescription = context.getString(R.string.launch_anland_window),
+                                tint = if (container.isRunning)
+                                    MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+\2'''
+          card2, n = pattern.subn(replacement, card, count=1)
+          assert n == 1, f'Anland icon insertion anchor matched {n} times'
+          card_path.write_text(card2)
+
+          screen_path = Path('Android/app/src/main/java/com/droidspaces/app/ui/screen/ContainersScreen.kt')
+          screen = screen_path.read_text()
+
+          old = 'import com.droidspaces.app.util.ContainerInfo\n'
+          new = ('import com.droidspaces.app.util.ContainerInfo\n'
+                 'import com.droidspaces.app.util.ContainerManager\n'
+                 'import com.droidspaces.app.util.AnlandUtils\n')
+          assert old in screen, 'ContainersScreen import anchor not found'
+          screen = screen.replace(old, new, 1)
+
+          old = 'import kotlinx.coroutines.launch\n'
+          new = 'import kotlinx.coroutines.launch\nimport kotlinx.coroutines.delay\n'
+          assert old in screen, 'coroutines import anchor not found'
+          screen = screen.replace(old, new, 1)
+
+          pattern = re.compile(
+              r'(\s+onShowLogs\s*=\s*\{\s*opsViewModel\.showLogViewerFor = container\.name\s*\},)',
+              re.MULTILINE
+          )
+          callback = r'''\1
+                            onLaunchAnland = {
+                                scope.launch {
+                                    var socket: String? = null
+                                    for (attempt in 0 until 10) {
+                                        socket = ContainerManager.getAnlandSocket(container.name)
+                                        if (socket != null) break
+                                        delay(200)
+                                    }
+                                    socket?.let {
+                                        AnlandUtils.launchWindow(context, container.name, it)
+                                    } ?: snackbarHostState.showSnackbar(
+                                        context.getString(R.string.anland_socket_not_ready),
+                                        duration = SnackbarDuration.Short
+                                    )
+                                }
+                            },'''
+          screen2, n = pattern.subn(callback, screen, count=1)
+          assert n == 1, f'Anland callback insertion anchor matched {n} times'
+          screen_path.write_text(screen2)
+
+          strings_path = Path('Android/app/src/main/res/values/strings.xml')
+          strings = strings_path.read_text()
+          old = '    <string name="anland_not_installed">Anland consumer app is not installed</string>\n'
+          new = old + '    <string name="anland_socket_not_ready">Anland display socket is not ready yet. Make sure the container is running.</string>\n'
+          assert old in strings, 'base Anland string anchor not found'
+          strings_path.write_text(strings.replace(old, new, 1))
+
+          zh_path = Path('Android/app/src/main/res/values-zh-rCN/strings.xml')
+          zh = zh_path.read_text()
+          assert '</resources>' in zh
+          additions = '''    <string name="launch_anland_window">打开 Anland</string>\n    <string name="anland_not_installed">未安装 Anland 应用</string>\n    <string name="anland_socket_not_ready">Anland 显示服务尚未就绪，请确认容器已启动。</string>\n'''
+          for key in ('launch_anland_window', 'anland_not_installed', 'anland_socket_not_ready'):
+              assert f'name="{key}"' not in zh, f'{key} already exists in zh strings'
+          zh_path.write_text(zh.replace('</resources>', additions + '</resources>', 1))
+          PY
+
+      - name: Record patch result
+        run: |
+          printf 'ok\n' > .patch-ok
+          git rm .github/workflows/fix-anland-launch-icon.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Android .patch-ok
+          git commit -m "feat: add one-tap Anland launch icon"
+          git push origin HEAD:fix/anland-launch-icon
