@@ -1,5 +1,6 @@
 package com.droidspaces.app.ui.component
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
@@ -20,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,11 +33,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.droidspaces.app.R
+import com.droidspaces.app.util.AnlandUtils
 import com.droidspaces.app.util.AnimationUtils
 import com.droidspaces.app.util.ContainerInfo
+import com.droidspaces.app.util.ContainerManager
 import com.droidspaces.app.util.ContainerOSInfoManager
 import com.droidspaces.app.util.ContainerStatus
 import com.droidspaces.app.util.IconUtils
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Per-item callbacks for [ContainerCard], grouped so the call site passes one
@@ -76,6 +82,7 @@ fun ContainerCard(
     val onToggleExpand = actions.onToggleExpand
     val onShowLogs = actions.onShowLogs
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val cardShape = RoundedCornerShape(20.dp)
 
     Surface(
@@ -134,6 +141,39 @@ fun ContainerCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (container.enableAnland) {
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    var socket: String? = null
+                                    for (attempt in 0 until 10) {
+                                        socket = ContainerManager.getAnlandSocket(container.name)
+                                        if (socket != null) break
+                                        delay(200)
+                                    }
+                                    socket?.let {
+                                        AnlandUtils.launchWindow(context, container.name, it)
+                                    } ?: Toast.makeText(
+                                        context,
+                                        "Anland display socket is not ready",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            },
+                            enabled = container.isRunning && !isOperationRunning,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.DesktopWindows,
+                                context.getString(R.string.launch_anland_window),
+                                tint = if (container.isRunning)
+                                    MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
                     IconButton(onClick = onShowLogs, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.Terminal, context.getString(R.string.view_logs), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
