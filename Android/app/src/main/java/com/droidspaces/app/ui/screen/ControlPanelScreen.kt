@@ -27,6 +27,8 @@ import com.droidspaces.app.util.AnlandUtils
 import com.droidspaces.app.util.ContainerManager
 import androidx.compose.ui.platform.LocalContext
 import com.droidspaces.app.R
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Control Panel screen - shows system stats and running containers.
@@ -46,6 +48,7 @@ fun ControlPanelScreen(
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     val systemStatsViewModel: SystemStatsViewModel = viewModel()
 
     // Get running containers - derived from ViewModel state
@@ -65,17 +68,6 @@ fun ControlPanelScreen(
     }
 
     val containerUsageMap = systemStatsViewModel.containerUsageMap
-
-    // Per-container anland display socket (recorded by the native runtime in
-    // Pids/<name>.anland). Refreshed whenever the running-container set changes;
-    // presence gates the "Launch Anland Window" button.
-    val anlandSockets = remember { mutableStateMapOf<String, String>() }
-    LaunchedEffect(runningContainers) {
-        anlandSockets.clear()
-        runningContainers.filter { it.enableAnland }.forEach { c ->
-            ContainerManager.getAnlandSocket(c.name)?.let { anlandSockets[c.name] = it }
-        }
-    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Show content based on root and backend availability
@@ -107,7 +99,6 @@ fun ControlPanelScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         runningContainers.forEach { container ->
-                            val anlandSock = anlandSockets[container.name]
                             RunningContainerCard(
                                 container = container,
                                 onEnter = {
@@ -116,9 +107,27 @@ fun ControlPanelScreen(
                                 onTerminalClick = {
                                     onNavigateToTerminal(container.name)
                                 },
-                                anlandEnabled = container.enableAnland && anlandSock != null,
+                                // Keep the original Anland pill visible as soon as the
+                                // container configuration enables Anland. The runtime can
+                                // report RUNNING slightly before Pids/<name>.anland is
+                                // written, so socket readiness must not gate visibility.
+                                anlandEnabled = container.enableAnland,
                                 onLaunchAnland = {
-                                    anlandSock?.let { AnlandUtils.launchWindow(context, container.name, it) }
+                                    scope.launch {
+                                        var socket: String? = null
+                                        for (attempt in 0 until 10) {
+                                            socket = ContainerManager.getAnlandSocket(container.name)
+                                            if (socket != null) break
+                                            delay(200)
+                                        }
+
+                                        socket?.let {
+                                            AnlandUtils.launchWindow(context, container.name, it)
+                                        } ?: snackbarHostState.showSnackbar(
+                                            message = "Anland display socket is not ready. Make sure the container is running with Anland Display enabled.",
+                                            duration = SnackbarDuration.Short
+                                        )
+                                    }
                                 },
                                 osInfo = containerUsageMap[container.name],
                             )
@@ -135,4 +144,3 @@ fun ControlPanelScreen(
         )
     }
 }
-
