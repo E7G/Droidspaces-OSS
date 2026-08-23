@@ -41,12 +41,59 @@
  * directly in this dir (no subdirectory to create). */
 #define ANLAND_SOCK_DIR "/data/local/tmp"
 
+/* Compatibility path used by older Anland consumers.  New Droidspaces
+ * instances use a per-container socket, so this must be kept as a symlink to
+ * the currently active daemon instead of being left as a stale socket path. */
+#define ANLAND_DEFAULT_SOCK ANLAND_SOCK_DIR "/display_daemon.sock"
+
 /* Per-container Pids-dir filenames (keyed by container name). */
 static void anland_pid_file(const struct ds_config *cfg, char *buf, size_t n) {
   snprintf(buf, n, "%s.anland.pid", cfg->container_name);
 }
 static void anland_sock_file(const struct ds_config *cfg, char *buf, size_t n) {
   snprintf(buf, n, "%s.anland", cfg->container_name);
+}
+
+static int anland_default_alias_target(char *buf, size_t n) {
+  ssize_t r = readlink(ANLAND_DEFAULT_SOCK, buf, n - 1);
+  if (r < 0)
+    return -1;
+  buf[r] = '\0';
+  return 0;
+}
+
+/* Atomically point the legacy consumer path at this container's current
+ * per-container socket.  The consumer may reconnect while a container is
+ * restarting, so publishing a dangling/old path here creates a reconnect loop
+ * that looks like an Anland hang. */
+static void anland_update_default_alias(const struct ds_config *cfg) {
+  if (!cfg || cfg->anland_sock[0] == '\0')
+    return;
+
+  char current[PATH_MAX];
+  if (anland_default_alias_target(current, sizeof(current)) == 0 &&
+      strcmp(current, cfg->anland_sock) == 0)
+    return;
+
+  char tmp[PATH_MAX];
+  snprintf(tmp, sizeof(tmp), "%s.tmp.%ld", ANLAND_DEFAULT_SOCK,
+           (long)getpid());
+  unlink(tmp);
+  if (symlink(cfg->anland_sock, tmp) < 0 ||
+      rename(tmp, ANLAND_DEFAULT_SOCK) < 0) {
+    ds_warn("[Anland] failed to publish compatibility socket %s -> %s: %s",
+            ANLAND_DEFAULT_SOCK, cfg->anland_sock, strerror(errno));
+    unlink(tmp);
+  }
+}
+
+static void anland_remove_default_alias(const struct ds_config *cfg) {
+  if (!cfg || cfg->anland_sock[0] == '\0')
+    return;
+  char current[PATH_MAX];
+  if (anland_default_alias_target(current, sizeof(current)) == 0 &&
+      strcmp(current, cfg->anland_sock) == 0)
+    unlink(ANLAND_DEFAULT_SOCK);
 }
 
 /* anland is per-container, so a daemon is never shared between containers:
@@ -162,6 +209,7 @@ int ds_anland_daemon_start(struct ds_config *cfg) {
   if (existing > 0) {
     cfg->anland_pid = existing;
     anland_load_sock(cfg);
+    anland_update_default_alias(cfg);
     ds_log("[Anland] daemon already running (PID %d)", (int)existing);
     return 1;
   }
@@ -205,7 +253,12 @@ int ds_anland_daemon_start(struct ds_config *cfg) {
   /* Give the daemon a moment to bind, then loosen the socket perms so the
    * consumer app can connect to it. */
   wait_for_socket_or_death(child, cfg->anland_sock, 2000, 20000);
-  chmod(cfg->anland_sock, 0666);
+  if (access(cfg->anland_sock, F_OK) == 0) {
+    chmod(cfg->anland_sock, 0666);
+    anland_update_default_alias(cfg);
+  } else {
+    ds_warn("[Anland] daemon socket did not appear at %s", cfg->anland_sock);
+  }
   return 0;
 }
 
@@ -221,6 +274,7 @@ void ds_anland_daemon_stop(struct ds_config *cfg) {
   if (cfg->anland_sock[0] == '\0')
     anland_load_sock(cfg);
 
+  anland_remove_default_alias(cfg);
   ds_global_daemon_stop(anland_never_needed, cfg->anland_pid, &cfg->anland_pid,
                         pidfile, cfg->anland_sock[0] ? cfg->anland_sock : NULL,
                         "[Anland]");
