@@ -662,6 +662,9 @@ int ds_setup_x11_socket(struct ds_config *cfg);
 int ds_anland_daemon_start(struct ds_config *cfg);
 void ds_anland_daemon_stop(struct ds_config *cfg);
 int ds_setup_anland_socket(struct ds_config *cfg);
+int ds_anland_session_start(struct ds_config *cfg, const char *session_id,
+                            char *sock_out, size_t sock_out_size);
+int ds_anland_session_stop(struct ds_config *cfg, const char *session_id);
 
 /* virgl-android.c */
 

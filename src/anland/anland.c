@@ -24,6 +24,8 @@
 #define _GNU_SOURCE
 #include "droidspace.h"
 
+#include <ctype.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -32,6 +34,7 @@
 
 #include "display_daemon.h"
 
+#include <sys/mount.h>
 #include <sys/stat.h>
 
 /* Host directory for the per-container display sockets: /data/local/tmp, which
@@ -40,6 +43,7 @@
  * of a workspace-private path. The socket files are named anland-<uuid>.sock
  * directly in this dir (no subdirectory to create). */
 #define ANLAND_SOCK_DIR "/data/local/tmp"
+#define ANLAND_RUNTIME_DIR "/run/droidspaces-anland"
 
 /* Compatibility path used by older Anland consumers.  New Droidspaces
  * instances use a per-container socket, so this must be kept as a symlink to
@@ -52,6 +56,42 @@ static void anland_pid_file(const struct ds_config *cfg, char *buf, size_t n) {
 }
 static void anland_sock_file(const struct ds_config *cfg, char *buf, size_t n) {
   snprintf(buf, n, "%s.anland", cfg->container_name);
+}
+
+/* A stable, per-container directory is bind-mounted into the container once.
+ * New app-mode broker sockets created later become visible there immediately,
+ * which lets one running container host many independent Android windows. */
+static void anland_session_dir(const struct ds_config *cfg, char *buf, size_t n) {
+  char safe[256];
+  sanitize_container_name(cfg->container_name, safe, sizeof(safe));
+  snprintf(buf, n, ANLAND_SOCK_DIR "/droidspaces-anland-%.240s", safe);
+}
+
+static int anland_valid_session_id(const char *id) {
+  if (!id || !*id)
+    return 0;
+  size_t len = strlen(id);
+  if (len > 64 || strcmp(id, ".") == 0 || strcmp(id, "..") == 0)
+    return 0;
+  for (size_t i = 0; i < len; i++) {
+    unsigned char ch = (unsigned char)id[i];
+    if (!(isalnum(ch) || ch == '-' || ch == '_' || ch == '.'))
+      return 0;
+  }
+  return 1;
+}
+
+static void anland_app_pid_file(const struct ds_config *cfg, const char *id,
+                                char *buf, size_t n) {
+  snprintf(buf, n, "%.200s.anland-app.%.64s.pid", cfg->container_name, id);
+}
+
+static void anland_app_socket(const struct ds_config *cfg, const char *id,
+                              char *buf, size_t n) {
+  char dir[PATH_MAX];
+  anland_session_dir(cfg, dir, sizeof(dir));
+  size_t dir_room = n > 80 ? n - 80 : 0;
+  snprintf(buf, n, "%.*s/app-%.64s.sock", (int)dir_room, dir, id);
 }
 
 static int anland_default_alias_target(char *buf, size_t n) {
@@ -99,6 +139,8 @@ static void anland_remove_default_alias(const struct ds_config *cfg) {
 /* anland is per-container, so a daemon is never shared between containers:
  * ds_global_daemon_stop's "keep alive for others" check is always false. */
 static int anland_never_needed(void) { return 0; }
+
+static void ds_anland_sessions_stop_all(struct ds_config *cfg);
 
 /* daemon child */
 
@@ -214,14 +256,21 @@ int ds_anland_daemon_start(struct ds_config *cfg) {
     return 1;
   }
 
-  /* Generated per-container socket path, directly in /data/local/tmp. */
-  char uuid[DS_UUID_LEN + 1];
-  if (generate_uuid(uuid, sizeof(uuid)) < 0) {
-    ds_error("[Anland] failed to generate socket name");
+  /* Keep every broker socket for this container in one stable directory.
+   * The directory itself is mounted into the container, so app-mode sessions
+   * can be added dynamically without another mount-namespace operation. */
+  char session_dir[PATH_MAX];
+  anland_session_dir(cfg, session_dir, sizeof(session_dir));
+  if (mkdir_p(session_dir, 0755) < 0) {
+    ds_error("[Anland] failed to create session directory %s: %s",
+             session_dir, strerror(errno));
     return -1;
   }
+  chmod(session_dir, 0755);
   snprintf(cfg->anland_sock, sizeof(cfg->anland_sock),
-           ANLAND_SOCK_DIR "/anland-%s.sock", uuid);
+           "%.*s/desktop.sock",
+           (int)(sizeof(cfg->anland_sock) - sizeof("/desktop.sock")),
+           session_dir);
 
   ds_log("[Anland] launching display daemon on %s", cfg->anland_sock);
 
@@ -265,6 +314,9 @@ int ds_anland_daemon_start(struct ds_config *cfg) {
 void ds_anland_daemon_stop(struct ds_config *cfg) {
   if (!cfg)
     return;
+
+  /* App-mode brokers are children of the container lifecycle too. */
+  ds_anland_sessions_stop_all(cfg);
   char pidfile[NAME_MAX + 16], sockfile[NAME_MAX + 16];
   anland_pid_file(cfg, pidfile, sizeof(pidfile));
   anland_sock_file(cfg, sockfile, sizeof(sockfile));
@@ -279,6 +331,127 @@ void ds_anland_daemon_stop(struct ds_config *cfg) {
                         pidfile, cfg->anland_sock[0] ? cfg->anland_sock : NULL,
                         "[Anland]");
   ds_daemon_remove_pid(sockfile);
+
+  char session_dir[PATH_MAX];
+  anland_session_dir(cfg, session_dir, sizeof(session_dir));
+  rmdir(session_dir);
+}
+
+/* WSLg-style application sessions */
+
+int ds_anland_session_start(struct ds_config *cfg, const char *session_id,
+                            char *sock_out, size_t sock_out_size) {
+  if (!cfg || !cfg->anland || !is_android() ||
+      !anland_valid_session_id(session_id)) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (getuid() != 0) {
+    errno = EPERM;
+    return -1;
+  }
+
+  char session_dir[PATH_MAX];
+  anland_session_dir(cfg, session_dir, sizeof(session_dir));
+  if (mkdir_p(session_dir, 0755) < 0)
+    return -1;
+  chmod(session_dir, 0755);
+
+  char sock[PATH_MAX];
+  anland_app_socket(cfg, session_id, sock, sizeof(sock));
+
+  char pidfile[NAME_MAX + 96];
+  anland_app_pid_file(cfg, session_id, pidfile, sizeof(pidfile));
+
+  pid_t existing = ds_daemon_read_pid(pidfile);
+  if (existing > 0) {
+    if (sock_out && sock_out_size)
+      safe_strncpy(sock_out, sock, sock_out_size);
+    return 0;
+  }
+
+  char safe_name[256];
+  sanitize_container_name(cfg->container_name, safe_name, sizeof(safe_name));
+  char log_rel[384];
+  snprintf(log_rel, sizeof(log_rel), "%.240s/anland-app-%.64s",
+           safe_name, session_id);
+
+  unlink(sock);
+  pid_t child = spawn_anland_daemon(sock, log_rel);
+  if (child <= 0)
+    return -1;
+
+  ds_daemon_write_pid(pidfile, child);
+  if (wait_for_socket_or_death(child, sock, 2000, 20000) < 0 ||
+      access(sock, F_OK) != 0) {
+    kill(child, SIGTERM);
+    ds_daemon_remove_pid(pidfile);
+    unlink(sock);
+    errno = EIO;
+    return -1;
+  }
+
+  chmod(sock, 0666);
+  if (sock_out && sock_out_size)
+    safe_strncpy(sock_out, sock, sock_out_size);
+  ds_log("[Anland-App] session %s ready on %s", session_id, sock);
+  return 0;
+}
+
+int ds_anland_session_stop(struct ds_config *cfg, const char *session_id) {
+  if (!cfg || !anland_valid_session_id(session_id)) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  char pidfile[NAME_MAX + 96];
+  anland_app_pid_file(cfg, session_id, pidfile, sizeof(pidfile));
+  char sock[PATH_MAX];
+  anland_app_socket(cfg, session_id, sock, sizeof(sock));
+
+  pid_t pid = ds_daemon_read_pid(pidfile);
+  if (pid > 0) {
+    pid_t tracked = pid;
+    ds_global_daemon_stop(anland_never_needed, pid, &tracked, pidfile, sock,
+                          "[Anland-App]");
+  } else {
+    ds_daemon_remove_pid(pidfile);
+    unlink(sock);
+  }
+  return 0;
+}
+
+static void ds_anland_sessions_stop_all(struct ds_config *cfg) {
+  if (!cfg)
+    return;
+
+  DIR *dir = opendir(get_pids_dir());
+  if (!dir)
+    return;
+
+  char prefix[320];
+  snprintf(prefix, sizeof(prefix), "%.200s.anland-app.", cfg->container_name);
+  size_t prefix_len = strlen(prefix);
+
+  struct dirent *ent;
+  while ((ent = readdir(dir)) != NULL) {
+    size_t name_len = strlen(ent->d_name);
+    if (name_len <= prefix_len + 4 ||
+        strncmp(ent->d_name, prefix, prefix_len) != 0 ||
+        strcmp(ent->d_name + name_len - 4, ".pid") != 0)
+      continue;
+
+    size_t id_len = name_len - prefix_len - 4;
+    if (id_len == 0 || id_len > 64)
+      continue;
+
+    char id[65];
+    memcpy(id, ent->d_name + prefix_len, id_len);
+    id[id_len] = '\0';
+    if (anland_valid_session_id(id))
+      ds_anland_session_stop(cfg, id);
+  }
+  closedir(dir);
 }
 
 /* socket bridge */
@@ -286,23 +459,33 @@ void ds_anland_daemon_stop(struct ds_config *cfg) {
 int ds_setup_anland_socket(struct ds_config *cfg) {
   if (!cfg || !cfg->anland || !is_android())
     return 0;
-  if (cfg->anland_sock[0] == '\0') {
-    ds_warn("[Anland] no daemon socket recorded - skipping bind mount");
-    return 0;
-  }
 
-  /* Post-pivot: the host socket is reachable under /.old_root. */
+  char session_dir[PATH_MAX];
+  anland_session_dir(cfg, session_dir, sizeof(session_dir));
+
+  /* Post-pivot: expose the whole per-container session directory. Future
+   * app-*.sock entries automatically appear through this one bind mount. */
   char src[PATH_MAX + 32];
-  snprintf(src, sizeof(src), "/.old_root%s", cfg->anland_sock);
+  snprintf(src, sizeof(src), "/.old_root%s", session_dir);
   if (access(src, F_OK) != 0) {
-    ds_warn("[Anland] host socket not found at %s - skipping bind mount", src);
+    ds_warn("[Anland] host session directory not found at %s", src);
     return 0;
   }
 
-  mkdir_p("/run", 0755);
-  if (ds_bind_mount_socket(src, "/run/display.sock", 0, "anland") < 0)
+  mkdir_p(ANLAND_RUNTIME_DIR, 0755);
+  if (mount(src, ANLAND_RUNTIME_DIR, NULL, MS_BIND | MS_REC, NULL) < 0) {
+    ds_warn("[Anland] failed to bind session directory %s -> %s: %s",
+            src, ANLAND_RUNTIME_DIR, strerror(errno));
     return 0;
+  }
 
-  ds_log("[Anland] display socket bind-mounted to /run/display.sock");
+  /* Preserve the producer ABI used by existing KWin/Weston startup scripts. */
+  unlink("/run/display.sock");
+  if (symlink(ANLAND_RUNTIME_DIR "/desktop.sock", "/run/display.sock") < 0) {
+    ds_warn("[Anland] failed to create /run/display.sock compatibility link: %s",
+            strerror(errno));
+  }
+
+  ds_log("[Anland] session directory mounted at %s", ANLAND_RUNTIME_DIR);
   return 0;
 }

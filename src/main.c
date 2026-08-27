@@ -31,6 +31,8 @@ void print_usage(void) {
       "  restart                   Restart a container\n"
       "  enter [user]              Enter a running container\n"
       "  run <cmd> [args]          Run a command in a running container\n"
+      "  anland-session <start|stop> <id>\n"
+      "                            Manage a WSLg-style Anland app broker\n"
       "  usage                     Show container uptime, CPU and RAM usage\n"
       "  info                      Show detailed container info\n"
       "  pid                       Show the live PID of the container init\n"
@@ -553,7 +555,8 @@ int main(int argc, char **argv) {
                           strcmp(discovered_cmd, "info") == 0 ||
                           strcmp(discovered_cmd, "usage") == 0 ||
                           strcmp(discovered_cmd, "enter") == 0 ||
-                          strcmp(discovered_cmd, "run") == 0));
+                          strcmp(discovered_cmd, "run") == 0 ||
+                          strcmp(discovered_cmd, "anland-session") == 0));
 
   int loaded = 0;
   if (cfg.config_file_specified) {
@@ -1212,6 +1215,36 @@ int main(int argc, char **argv) {
     }
     const char *user = (optind + 1 < argc) ? argv[optind + 1] : "root";
     ret = enter_rootfs(&cfg, user);
+    goto cleanup;
+  }
+
+  if (strcmp(cmd, "anland-session") == 0) {
+    if (optind + 2 >= argc) {
+      ds_error("Usage: %s --name=<container> anland-session <start|stop> <id>",
+               cfg.prog_name);
+      ret = 1;
+      goto cleanup;
+    }
+
+    const char *action = argv[optind + 1];
+    const char *session_id = argv[optind + 2];
+
+    if (strcmp(action, "start") == 0) {
+      if (!cfg.anland) {
+        ds_error("Anland is not enabled for container '%s'", cfg.container_name);
+        ret = 1;
+        goto cleanup;
+      }
+      char sock[PATH_MAX];
+      ret = ds_anland_session_start(&cfg, session_id, sock, sizeof(sock));
+      if (ret == 0)
+        printf("%s\n", sock);
+    } else if (strcmp(action, "stop") == 0) {
+      ret = ds_anland_session_stop(&cfg, session_id);
+    } else {
+      ds_error("Unknown anland-session action: %s", action);
+      ret = 1;
+    }
     goto cleanup;
   }
 
