@@ -236,6 +236,20 @@ object AnlandAppManager {
                 return@withContext Result.success(AnlandAppSession(id, hostSocket))
             }
 
+            val prepareHookScript =
+                "if command -v droidspaces-wslg-prepare >/dev/null 2>&1; then exec droidspaces-wslg-prepare; fi"
+            val prepareHook = Shell.cmd(
+                "$binary --name=$qName run sh -lc " +
+                    ContainerCommandBuilder.quote(prepareHookScript)
+            ).exec()
+            if (!prepareHook.isSuccess) {
+                Shell.cmd("$binary --name=$qName anland-session stop $qId").exec()
+                val detail = (prepareHook.out + prepareHook.err).joinToString("\n").trim()
+                return@withContext Result.failure(
+                    IllegalStateException(detail.ifBlank { "WSLg rootfs prepare hook failed" })
+                )
+            }
+
             val innerSession = """
                 kwin_cmd="${'$'}(command -v droidspaces-wslg-kwin 2>/dev/null || command -v kwin_wayland)"
                 "${'$'}kwin_cmd" --anland --xwayland &
@@ -304,14 +318,20 @@ object AnlandAppManager {
                 "$binary --name=$qName --user=$qUser run sh -lc " +
                     ContainerCommandBuilder.quote(compositorScript)
             val stopCommand = "$binary --name=$qName anland-session stop $qId"
+            val cleanupHookScript =
+                "if command -v droidspaces-wslg-cleanup >/dev/null 2>&1; then droidspaces-wslg-cleanup; fi"
+            val cleanupCommand =
+                "$binary --name=$qName run sh -lc " +
+                    ContainerCommandBuilder.quote(cleanupHookScript)
             val logPath = "/data/local/tmp/droidspaces-wslg-v2.log"
             val wrapper =
-                "( $runCommand; $stopCommand ) >" +
+                "( $runCommand; $stopCommand; $cleanupCommand ) >" +
                     ContainerCommandBuilder.quote(logPath) +
                     " 2>&1 </dev/null &"
             val started = Shell.cmd(wrapper).exec()
             if (!started.isSuccess) {
                 Shell.cmd(stopCommand).exec()
+                Shell.cmd(cleanupCommand).exec()
                 val detail = (started.out + started.err).joinToString("\n").trim()
                 return@withContext Result.failure(
                     IllegalStateException(detail.ifBlank { "Failed to start shared KWin compositor" })
@@ -343,6 +363,12 @@ object AnlandAppManager {
                 ContainerCommandBuilder.quote(stopScript)
         ).exec()
         stopSession(containerName, "wslg-v2")
+        val cleanupHookScript =
+            "if command -v droidspaces-wslg-cleanup >/dev/null 2>&1; then droidspaces-wslg-cleanup; fi"
+        Shell.cmd(
+            "$binary --name=$qName run sh -lc " +
+                ContainerCommandBuilder.quote(cleanupHookScript)
+        ).exec()
     }
 
     suspend fun stopSession(containerName: String, sessionId: String) =
