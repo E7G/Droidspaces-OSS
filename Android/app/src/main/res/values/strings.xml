@@ -653,4 +653,22 @@
     <string name="anland_app_launch_failed">Could not launch Linux app: %1$s</string>
     <string name="anland_app_mode_requires_kwin">Requires the Anland-patched KWin package inside this container.</string>
     <string name="unknown_error">Unknown error</string>
+    <string name="allow">Allow</string>
+    <string name="not_now">Not now</string>
+    <string name="terminal_font_import_error">Not a valid font file: %1$s</string>
+    <string name="terminal_font_family">Font family</string>
+    <string name="terminal_font_description">Applies to new terminal sessions. Import any monospace .ttf or .otf file.</string>
+    <string name="terminal_font_default">JetBrains Mono (Default)</string>
+    <string name="terminal_font_import">Import a custom font</string>
+    <string name="terminal_font_delete">Remove font</string>
+    <string name="terminal_close_tab_title">Close session?</string>
+    <string name="terminal_close_tab_message">The shell running in this tab will end.</string>
+    <string name="terminal_appearance_summary">Dark mode, font size and custom fonts</string>
+    <string name="terminal_font">Font</string>
+    <string name="terminal_font_size">Font size</string>
+    <string name="terminal_font_size_description">Initial text size for new terminal sessions. Pinch to zoom adjusts each session separately.</string>
+    <string name="terminal_section_theme">Theme</string>
+    <string name="terminal_section_misc">Misc</string>
+    <string name="terminal_confirm_close">Confirm Before Closing</string>
+    <string name="terminal_confirm_close_description">Ask for confirmation when closing a terminal tab</string>
 </resources>
