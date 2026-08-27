@@ -150,7 +150,7 @@ object AnlandAppManager {
 
     private suspend fun detectDefaultUser(containerName: String): String? {
         val script =
-            "getent passwd 2>/dev/null | awk -F: '\\$3 >= 1000 && \\$3 < 65534 && \\$7 !~ /(nologin|false)/ { print \\$1; exit }'"
+            "getent passwd 2>/dev/null | awk -F: '\$3 >= 1000 && \$3 < 65534 && \$7 !~ /(nologin|false)/ { print \$1; exit }'"
         val result = runInContainer(containerName, script)
         return if (result.isSuccess) result.out.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
         else null
