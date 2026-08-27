@@ -640,4 +640,17 @@
     <string name="repo_custom_url_empty">URL cannot be empty</string>
     <string name="repo_custom_url_invalid">URL must start with https://</string>
     <string name="debugging_section">Debugging</string>
+    <string name="anland_apps_title">Linux Apps (WSLg)</string>
+    <string name="anland_apps_desc">Run Linux apps as separate Android windows through Anland</string>
+    <string name="anland_apps_open">Apps</string>
+    <string name="anland_apps_search">Search Linux apps</string>
+    <string name="anland_apps_loading">Scanning desktop applications…</string>
+    <string name="anland_apps_empty">No visible .desktop applications found. You can run a custom command below.</string>
+    <string name="anland_custom_command">Custom command</string>
+    <string name="anland_custom_command_hint">e.g. konsole or code</string>
+    <string name="anland_run">Run in app window</string>
+    <string name="anland_launching">Launching…</string>
+    <string name="anland_app_launch_failed">Could not launch Linux app: %1$s</string>
+    <string name="anland_app_mode_requires_kwin">Requires the Anland-patched KWin package inside this container.</string>
+    <string name="unknown_error">Unknown error</string>
 </resources>
