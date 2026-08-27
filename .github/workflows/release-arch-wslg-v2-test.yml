@@ -1,0 +1,77 @@
+name: Release Arch WSLg V2 Test
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/release-arch-wslg-v2-test.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download validated Droidspaces artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf release-assets
+          mkdir -p release-assets
+          gh run download 33097781607 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name droidspaces-artifacts \
+            --dir release-assets
+          find release-assets -type f -print
+
+      - name: Prepare checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          find . -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish test release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="arch-wslg-v2-test-20260828"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          mapfile -t assets < <(find release-assets -type f -print | sort)
+          (("${#assets[@]}" > 0))
+
+          gh release create "$tag" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "295e49455bfb3010e02cc5d27d2a441c978a8ae7" \
+            --title "Droidspaces Arch WSLg V2 Test 2026-08-28" \
+            --prerelease \
+            --notes "Arch / Mi Pad 4 WSLg V2 实机测试版。
+
+基于已通过完整 CI 的 Droidspaces main commit 295e49455bfb3010e02cc5d27d2a441c978a8ae7。
+
+包含：
+- WSLg V2 共享 KWin compositor
+- ANLAND_MULTIWINDOW 窗口 sideband
+- Linux Apps 搜索/启动
+- V1 一应用一会话兼容回退
+- Mi Pad 4 rootfs launcher 自动优先
+- droidspaces-wslg-prepare / cleanup 生命周期接入
+
+配套 Anland 使用 E7G/anland Release: mi-pad4-optimized-v80。
+配套 Arch RootFS 使用 Droidspaces-rootfs-KDE-builder 的 arch-anland-v2-mipad4-rootfs artifact。"
