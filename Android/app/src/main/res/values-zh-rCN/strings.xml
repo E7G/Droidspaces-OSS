@@ -565,4 +565,20 @@
     <string name="anland_app_launch_failed">Linux 应用启动失败：%1$s</string>
     <string name="anland_app_mode_requires_kwin">需要容器内安装带 Anland 后端补丁的 KWin。</string>
     <string name="unknown_error">未知错误</string>
+    <string name="terminal_font_import_error">不是有效的字体文件：%1$s</string>
+    <string name="terminal_font_family">字体</string>
+    <string name="terminal_font_description">应用于新建的终端会话。可导入任意等宽 .ttf 或 .otf 字体。</string>
+    <string name="terminal_font_default">JetBrains Mono（默认）</string>
+    <string name="terminal_font_import">导入自定义字体</string>
+    <string name="terminal_font_delete">删除字体</string>
+    <string name="terminal_close_tab_title">关闭会话？</string>
+    <string name="terminal_close_tab_message">此标签页中正在运行的 Shell 将结束。</string>
+    <string name="terminal_appearance_summary">深色模式、字号与自定义字体</string>
+    <string name="terminal_font">字体</string>
+    <string name="terminal_font_size">字体大小</string>
+    <string name="terminal_font_size_description">新建终端会话的初始文字大小。双指缩放可单独调整每个会话。</string>
+    <string name="terminal_section_theme">主题</string>
+    <string name="terminal_section_misc">其他</string>
+    <string name="terminal_confirm_close">关闭前确认</string>
+    <string name="terminal_confirm_close_description">关闭终端标签页时先询问确认</string>
 </resources>
