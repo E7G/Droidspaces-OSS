@@ -90,7 +90,8 @@ static void anland_app_socket(const struct ds_config *cfg, const char *id,
                               char *buf, size_t n) {
   char dir[PATH_MAX];
   anland_session_dir(cfg, dir, sizeof(dir));
-  snprintf(buf, n, "%s/app-%.64s.sock", dir, id);
+  size_t dir_room = n > 80 ? n - 80 : 0;
+  snprintf(buf, n, "%.*s/app-%.64s.sock", (int)dir_room, dir, id);
 }
 
 static int anland_default_alias_target(char *buf, size_t n) {
@@ -267,7 +268,9 @@ int ds_anland_daemon_start(struct ds_config *cfg) {
   }
   chmod(session_dir, 0755);
   snprintf(cfg->anland_sock, sizeof(cfg->anland_sock),
-           "%s/desktop.sock", session_dir);
+           "%.*s/desktop.sock",
+           (int)(sizeof(cfg->anland_sock) - sizeof("/desktop.sock")),
+           session_dir);
 
   ds_log("[Anland] launching display daemon on %s", cfg->anland_sock);
 
