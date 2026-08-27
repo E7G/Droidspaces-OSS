@@ -236,7 +236,11 @@ object AnlandAppManager {
             }
 
             val innerSession = """
-                kwin_wayland --anland --xwayland &
+                kwin_cmd="kwin_wayland"
+                if command -v droidspaces-wslg-kwin >/dev/null 2>&1; then
+                    kwin_cmd="droidspaces-wslg-kwin"
+                fi
+                "${'$'}kwin_cmd" --anland --xwayland &
                 kwin_pid=${'$'}!
                 printf '%s\n' "${'$'}kwin_pid" > "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.pid"
                 ready=0
@@ -298,18 +302,37 @@ object AnlandAppManager {
                 exec dbus-run-session sh -lc ${ContainerCommandBuilder.quote(innerSession)}
             """.trimIndent()
 
+            val prepareScript = """
+                if command -v droidspaces-wslg-prepare >/dev/null 2>&1; then
+                    droidspaces-wslg-prepare
+                fi
+            """.trimIndent()
+            val cleanupScript = """
+                if command -v droidspaces-wslg-cleanup >/dev/null 2>&1; then
+                    droidspaces-wslg-cleanup
+                fi
+            """.trimIndent()
+            val prepareCommand =
+                "$binary --name=$qName run sh -lc " +
+                    ContainerCommandBuilder.quote(prepareScript)
+            val cleanupCommand =
+                "$binary --name=$qName run sh -lc " +
+                    ContainerCommandBuilder.quote(cleanupScript)
+            Shell.cmd(prepareCommand).exec()
+
             val runCommand =
                 "$binary --name=$qName --user=$qUser run sh -lc " +
                     ContainerCommandBuilder.quote(compositorScript)
             val stopCommand = "$binary --name=$qName anland-session stop $qId"
             val logPath = "/data/local/tmp/droidspaces-wslg-v2.log"
             val wrapper =
-                "( $runCommand; $stopCommand ) >" +
+                "( $runCommand; $stopCommand; $cleanupCommand ) >" +
                     ContainerCommandBuilder.quote(logPath) +
                     " 2>&1 </dev/null &"
             val started = Shell.cmd(wrapper).exec()
             if (!started.isSuccess) {
                 Shell.cmd(stopCommand).exec()
+                Shell.cmd(cleanupCommand).exec()
                 val detail = (started.out + started.err).joinToString("\n").trim()
                 return@withContext Result.failure(
                     IllegalStateException(detail.ifBlank { "Failed to start shared KWin compositor" })
@@ -341,6 +364,15 @@ object AnlandAppManager {
                 ContainerCommandBuilder.quote(stopScript)
         ).exec()
         stopSession(containerName, "wslg-v2")
+        val cleanupScript = """
+            if command -v droidspaces-wslg-cleanup >/dev/null 2>&1; then
+                droidspaces-wslg-cleanup
+            fi
+        """.trimIndent()
+        Shell.cmd(
+            "$binary --name=$qName run sh -lc " +
+                ContainerCommandBuilder.quote(cleanupScript)
+        ).exec()
     }
 
     suspend fun stopSession(containerName: String, sessionId: String) =
