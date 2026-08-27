@@ -28,6 +28,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -123,6 +124,7 @@ private fun AnlandAppsDialog(
     var query by remember { mutableStateOf("") }
     var customCommand by remember { mutableStateOf("") }
     var launching by remember { mutableStateOf<String?>(null) }
+    var sharedMode by remember { mutableStateOf(false) }
 
     LaunchedEffect(containerName) {
         loading = true
@@ -134,7 +136,11 @@ private fun AnlandAppsDialog(
         if (launching != null) return
         launching = app.name
         scope.launch {
-            val result = AnlandAppManager.launchApp(containerName, app)
+            val result = if (sharedMode) {
+                AnlandAppManager.launchSharedApp(containerName, app)
+            } else {
+                AnlandAppManager.launchApp(containerName, app)
+            }
             launching = null
             result.onSuccess { session ->
                 AnlandUtils.launchWindow(context, app.name, session.hostSocket)
@@ -198,6 +204,36 @@ private fun AnlandAppsDialog(
                         enabled = launching == null,
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null)
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Switch(
+                            checked = sharedMode,
+                            onCheckedChange = { sharedMode = it },
+                            enabled = launching == null,
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = context.getString(R.string.anland_shared_mode_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = context.getString(R.string.anland_shared_mode_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
 

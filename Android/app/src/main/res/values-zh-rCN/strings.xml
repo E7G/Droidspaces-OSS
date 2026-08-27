@@ -581,4 +581,6 @@
     <string name="terminal_section_misc">其他</string>
     <string name="terminal_confirm_close">关闭前确认</string>
     <string name="terminal_confirm_close_description">关闭终端标签页时先询问确认</string>
+    <string name="anland_shared_mode_title">WSLg V2 共享合成器</string>
+    <string name="anland_shared_mode_desc">实验模式：多个 Linux 应用共用一个 KWin 会话，并把真实窗口树同步到 Android。关闭后使用已验证的“一应用一会话”兼容模式。</string>
 </resources>
