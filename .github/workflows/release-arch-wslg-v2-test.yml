@@ -57,22 +57,26 @@ jobs:
           mapfile -t assets < <(find release-assets -type f -print | sort)
           (("${#assets[@]}" > 0))
 
+          cat > release-notes.md <<'EOF'
+          Arch / Mi Pad 4 WSLg V2 实机测试版。
+
+          基于已通过完整 CI 的 Droidspaces main commit 295e49455bfb3010e02cc5d27d2a441c978a8ae7。
+
+          包含：
+          - WSLg V2 共享 KWin compositor
+          - ANLAND_MULTIWINDOW 窗口 sideband
+          - Linux Apps 搜索/启动
+          - V1 一应用一会话兼容回退
+          - Mi Pad 4 rootfs launcher 自动优先
+          - droidspaces-wslg-prepare / cleanup 生命周期接入
+
+          配套 Anland：E7G/anland Release mi-pad4-optimized-v80。
+          配套 Arch RootFS：Droidspaces-rootfs-KDE-builder 的 arch-anland-v2-mipad4-rootfs artifact。
+          EOF
+
           gh release create "$tag" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "295e49455bfb3010e02cc5d27d2a441c978a8ae7" \
             --title "Droidspaces Arch WSLg V2 Test 2026-08-28" \
             --prerelease \
-            --notes "Arch / Mi Pad 4 WSLg V2 实机测试版。
-
-基于已通过完整 CI 的 Droidspaces main commit 295e49455bfb3010e02cc5d27d2a441c978a8ae7。
-
-包含：
-- WSLg V2 共享 KWin compositor
-- ANLAND_MULTIWINDOW 窗口 sideband
-- Linux Apps 搜索/启动
-- V1 一应用一会话兼容回退
-- Mi Pad 4 rootfs launcher 自动优先
-- droidspaces-wslg-prepare / cleanup 生命周期接入
-
-配套 Anland 使用 E7G/anland Release: mi-pad4-optimized-v80。
-配套 Arch RootFS 使用 Droidspaces-rootfs-KDE-builder 的 arch-anland-v2-mipad4-rootfs artifact。"
+            --notes-file release-notes.md
