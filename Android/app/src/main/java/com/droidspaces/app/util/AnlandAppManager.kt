@@ -245,15 +245,22 @@ object AnlandAppManager {
                         [ -S "${'$'}wl" ] || continue
                         case "${'$'}wl" in *.lock) continue ;; esac
                         wayland_display="${'$'}(basename "${'$'}wl")"
+                        env_tmp="${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env.tmp"
                         {
                             printf "export XDG_RUNTIME_DIR='%s'\n" "${'$'}XDG_RUNTIME_DIR"
                             printf "export WAYLAND_DISPLAY='%s'\n" "${'$'}wayland_display"
                             printf "export DBUS_SESSION_BUS_ADDRESS='%s'\n" "${'$'}DBUS_SESSION_BUS_ADDRESS"
+                            for xsock in /tmp/.X11-unix/X*; do
+                                [ -S "${'$'}xsock" ] || continue
+                                printf "export DISPLAY=':%s'\n" "${'$'}{xsock##*X}"
+                                break
+                            done
                             printf "export QT_QPA_PLATFORM='wayland'\n"
                             printf "export GDK_BACKEND='wayland,x11'\n"
                             printf "export MOZ_ENABLE_WAYLAND='1'\n"
-                        } > "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env"
-                        chmod 0600 "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env"
+                        } > "${'$'}env_tmp"
+                        chmod 0600 "${'$'}env_tmp"
+                        mv -f "${'$'}env_tmp" "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env"
                         ready=1
                         break 2
                     done
@@ -274,7 +281,9 @@ object AnlandAppManager {
                 mkdir -p "${'$'}XDG_RUNTIME_DIR"
                 chmod 0700 "${'$'}XDG_RUNTIME_DIR"
                 rm -f "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env" \
-                      "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.pid"
+                      "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env.tmp" \
+                      "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.pid" \
+                      "${'$'}XDG_RUNTIME_DIR"/wayland-*
                 unset DISPLAY
                 export ANLAND_SOCKET="$containerSocket"
                 export ANLAND=1
