@@ -838,7 +838,7 @@ static enum ds_socketd_status socketd_lifecycle_restart(struct ds_config *cfg,
   if (was_running) {
     /* No CLI argv here: the bridge's config arrives over the wire, so there
      * are no overrides to re-apply after restart's config reload. */
-    if (restart_rootfs_with_timeout(cfg, timeout_seconds, 0, NULL) < 0)
+    if (restart_rootfs_with_timeout(cfg, timeout_seconds) < 0)
       return DS_SOCKETD_STATUS_INTERNAL_ERROR;
   } else {
     if (start_rootfs(cfg) < 0)
