@@ -671,4 +671,6 @@
     <string name="terminal_section_misc">Misc</string>
     <string name="terminal_confirm_close">Confirm Before Closing</string>
     <string name="terminal_confirm_close_description">Ask for confirmation when closing a terminal tab</string>
+    <string name="anland_shared_mode_title">WSLg V2 shared compositor</string>
+    <string name="anland_shared_mode_desc">Experimental: reuse one KWin session for multiple Linux apps and synchronize the real window tree to Android. Turn off to use the proven one-app-per-session fallback.</string>
 </resources>
