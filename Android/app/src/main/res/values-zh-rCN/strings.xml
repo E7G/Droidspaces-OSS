@@ -552,4 +552,17 @@
     <string name="storage_location_default_description">将rootfs保存在 %1$s</string>
     <string name="storage_location_checking">检查存储位置……</string>
     <string name="storage_location_free">%1$s, %2$d GB 空闲</string>
+    <string name="anland_apps_title">Linux 应用（WSLg 模式）</string>
+    <string name="anland_apps_desc">通过 Anland 将 Linux 应用作为独立 Android 窗口运行</string>
+    <string name="anland_apps_open">应用</string>
+    <string name="anland_apps_search">搜索 Linux 应用</string>
+    <string name="anland_apps_loading">正在扫描桌面应用……</string>
+    <string name="anland_apps_empty">未找到可见的 .desktop 应用。你也可以在下方直接运行自定义命令。</string>
+    <string name="anland_custom_command">自定义命令</string>
+    <string name="anland_custom_command_hint">例如 konsole 或 code</string>
+    <string name="anland_run">以独立窗口运行</string>
+    <string name="anland_launching">正在启动……</string>
+    <string name="anland_app_launch_failed">Linux 应用启动失败：%1$s</string>
+    <string name="anland_app_mode_requires_kwin">需要容器内安装带 Anland 后端补丁的 KWin。</string>
+    <string name="unknown_error">未知错误</string>
 </resources>
