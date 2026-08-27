@@ -139,6 +139,8 @@ static void anland_remove_default_alias(const struct ds_config *cfg) {
  * ds_global_daemon_stop's "keep alive for others" check is always false. */
 static int anland_never_needed(void) { return 0; }
 
+static void ds_anland_sessions_stop_all(struct ds_config *cfg);
+
 /* daemon child */
 
 /*
