@@ -93,7 +93,10 @@ object AnlandAppManager {
             val qAppCommand = ContainerCommandBuilder.quote(appCommand)
 
             val sessionScript = """
-                export XDG_RUNTIME_DIR="${'
+                export XDG_RUNTIME_DIR="/run/user/${'$'}(id -u)"
+                mkdir -p "${'$'}XDG_RUNTIME_DIR"
+                chmod 0700 "${'$'}XDG_RUNTIME_DIR"
+                unset DISPLAY
                 export ANLAND_SOCKET="$containerSocket"
                 export ANLAND=1
                 export ANLAND_DRM_DEVICE=/dev/dri/renderD128
