@@ -17,11 +17,12 @@ data class AnlandAppSession(
 )
 
 /**
- * WSLg-like app launcher for Anland.
+ * Linux application launcher for Anland.
  *
- * Each Linux application receives its own Anland broker socket and its own
- * lightweight KWin Wayland compositor. The Anland Android consumer maps that
- * socket to a separate Android task/window.
+ * clean intentionally keeps one independent Anland/KWin session per app.
+ * Shared-compositor/WSLg-style behaviour is left to a future Anland v6 path.
+ * Hardware-specific environment belongs to the RootFS device profile instead
+ * of the Android application.
  */
 object AnlandAppManager {
     private const val MAX_APPS = 160
@@ -88,36 +89,44 @@ object AnlandAppManager {
                 )
 
             val user = detectDefaultUser(containerName) ?: "root"
+            val qUser = ContainerCommandBuilder.quote(user)
             val containerSocket = "/run/droidspaces-anland/app-$id.sock"
             val appCommand = sanitizeDesktopExec(app.exec)
             val qAppCommand = ContainerCommandBuilder.quote(appCommand)
 
             val sessionScript = """
-                export XDG_RUNTIME_DIR="/run/user/${'$'}(id -u)"
+                set -u
+                export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-${'$'}HOME/.local/run/droidspaces-${'$'}(id -u)}"
                 mkdir -p "${'$'}XDG_RUNTIME_DIR"
-                chmod 0700 "${'$'}XDG_RUNTIME_DIR"
+                chmod 0700 "${'$'}XDG_RUNTIME_DIR" 2>/dev/null || true
                 unset DISPLAY
                 export ANLAND_SOCKET="$containerSocket"
                 export ANLAND=1
-                export ANLAND_DRM_DEVICE=/dev/dri/renderD128
-                export MESA_LOADER_DRIVER_OVERRIDE=kgsl
-                export GALLIUM_DRIVER=kgsl
-                export FD_FORCE_KGSL=1
-                export QT_QPA_PLATFORM=wayland
-                export GDK_BACKEND=wayland,x11
-                export MOZ_ENABLE_WAYLAND=1
-                exec dbus-run-session kwin_wayland --anland --xwayland --exit-with-session sh -lc $qAppCommand
+                if [ -e /dev/dri/renderD128 ] && [ -z "${'$'}{ANLAND_DRM_DEVICE:-}" ]; then
+                    export ANLAND_DRM_DEVICE=/dev/dri/renderD128
+                fi
+
+                kwin_cmd=kwin_wayland
+                if command -v droidspaces-anland-kwin >/dev/null 2>&1; then
+                    kwin_cmd=droidspaces-anland-kwin
+                fi
+
+                if command -v droidspaces-launch-app >/dev/null 2>&1; then
+                    exec dbus-run-session "${'$'}kwin_cmd" --anland --xwayland \
+                        --exit-with-session droidspaces-launch-app --shell $qAppCommand
+                fi
+
+                # Compatibility fallback for older RootFS images. Do not leak
+                # compositor-only ION preload or a forced Qt backend into apps.
+                exec dbus-run-session "${'$'}kwin_cmd" --anland --xwayland \
+                    --exit-with-session env -u LD_PRELOAD -u QT_QPA_PLATFORM \
+                    sh -lc $qAppCommand
             """.trimIndent()
 
-            val runCommand = buildString {
-                append(binary)
-                append(" --name=").append(qName)
-                append(" --user=").append(ContainerCommandBuilder.quote(user))
-                append(" run sh -lc ")
-                append(ContainerCommandBuilder.quote(sessionScript))
-            }
-            val stopCommand =
-                "$binary --name=$qName anland-session stop $qId"
+            val runCommand =
+                "$binary --name=$qName --user=$qUser run sh -lc " +
+                    ContainerCommandBuilder.quote(sessionScript)
+            val stopCommand = "$binary --name=$qName anland-session stop $qId"
             val logPath = "/data/local/tmp/droidspaces-anland-$id.log"
 
             // Detach all file descriptors so libsu does not wait for the GUI.
@@ -137,242 +146,6 @@ object AnlandAppManager {
         } catch (t: Throwable) {
             Result.failure(t)
         }
-    }
-
-    /**
-     * V2 shared-compositor mode. One KWin instance hosts many Linux apps while
-     * ANLAND_MULTIWINDOW publishes KWin's top-level tree to the Android consumer.
-     */
-    suspend fun launchSharedApp(
-        containerName: String,
-        app: LinuxDesktopApp,
-    ): Result<AnlandAppSession> = withContext(Dispatchers.IO) {
-        try {
-            require(app.exec.isNotBlank()) { "Empty application command" }
-            val session = ensureSharedSession(containerName).getOrThrow()
-            val user = detectDefaultUser(containerName) ?: "root"
-            val binary = Constants.DROIDSPACES_BINARY_PATH
-            val qName = ContainerCommandBuilder.quote(containerName)
-            val qUser = ContainerCommandBuilder.quote(user)
-            val appCommand = sanitizeDesktopExec(app.exec)
-
-            val launchScript = """
-                export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-${'$'}HOME/.local/run/anland-${'$'}(id -u)}"
-                env_file="${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env"
-                for i in ${'$'}(seq 1 100); do
-                    [ -s "${'$'}env_file" ] && break
-                    sleep 0.1
-                done
-                [ -s "${'$'}env_file" ] || {
-                    echo "WSLg V2 compositor did not publish its Wayland environment" >&2
-                    exit 1
-                }
-                . "${'$'}env_file"
-                exec sh -lc ${ContainerCommandBuilder.quote(appCommand)}
-            """.trimIndent()
-
-            val runCommand =
-                "$binary --name=$qName --user=$qUser run sh -lc " +
-                    ContainerCommandBuilder.quote(launchScript)
-            val logPath = "/data/local/tmp/droidspaces-wslg-v2-app.log"
-            val launched = Shell.cmd(
-                "$runCommand >>${ContainerCommandBuilder.quote(logPath)} 2>&1 </dev/null &"
-            ).exec()
-            if (!launched.isSuccess) {
-                val detail = (launched.out + launched.err).joinToString("\n").trim()
-                return@withContext Result.failure(
-                    IllegalStateException(detail.ifBlank { "Failed to launch app in shared WSLg session" })
-                )
-            }
-            Result.success(session)
-        } catch (t: Throwable) {
-            Result.failure(t)
-        }
-    }
-
-    suspend fun ensureSharedSession(
-        containerName: String,
-    ): Result<AnlandAppSession> = withContext(Dispatchers.IO) {
-        try {
-            val id = "wslg-v2"
-            val binary = Constants.DROIDSPACES_BINARY_PATH
-            val qName = ContainerCommandBuilder.quote(containerName)
-            val qId = ContainerCommandBuilder.quote(id)
-
-            val broker = Shell.cmd(
-                "$binary --name=$qName anland-session start $qId 2>&1"
-            ).exec()
-            if (!broker.isSuccess) {
-                val detail = (broker.out + broker.err).joinToString("\n").trim()
-                return@withContext Result.failure(
-                    IllegalStateException(detail.ifBlank { "Failed to create shared Anland broker" })
-                )
-            }
-            val hostSocket = (broker.out + broker.err)
-                .asReversed()
-                .map { it.trim() }
-                .firstOrNull { it.startsWith("/") && it.endsWith(".sock") }
-                ?: return@withContext Result.failure(
-                    IllegalStateException("Shared broker started but returned no socket path")
-                )
-
-            val user = detectDefaultUser(containerName) ?: "root"
-            val qUser = ContainerCommandBuilder.quote(user)
-            val containerSocket = "/run/droidspaces-anland/app-$id.sock"
-
-            val checkScript = """
-                export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-${'$'}HOME/.local/run/anland-${'$'}(id -u)}"
-                pid_file="${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.pid"
-                [ -s "${'$'}pid_file" ] || exit 1
-                pid="${'$'}(cat "${'$'}pid_file" 2>/dev/null)" || exit 1
-                kill -0 "${'$'}pid" 2>/dev/null
-            """.trimIndent()
-            val check = Shell.cmd(
-                "$binary --name=$qName --user=$qUser run sh -lc " +
-                    ContainerCommandBuilder.quote(checkScript)
-            ).exec()
-            if (check.isSuccess) {
-                return@withContext Result.success(AnlandAppSession(id, hostSocket))
-            }
-
-            val innerSession = """
-                kwin_cmd="kwin_wayland"
-                if command -v droidspaces-wslg-kwin >/dev/null 2>&1; then
-                    kwin_cmd="droidspaces-wslg-kwin"
-                fi
-                "${'$'}kwin_cmd" --anland --xwayland &
-                kwin_pid=${'$'}!
-                printf '%s\n' "${'$'}kwin_pid" > "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.pid"
-                ready=0
-                for i in ${'$'}(seq 1 100); do
-                    for wl in "${'$'}XDG_RUNTIME_DIR"/wayland-*; do
-                        [ -S "${'$'}wl" ] || continue
-                        case "${'$'}wl" in *.lock) continue ;; esac
-                        wayland_display="${'$'}(basename "${'$'}wl")"
-                        env_tmp="${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env.tmp"
-                        {
-                            printf "export XDG_RUNTIME_DIR='%s'\n" "${'$'}XDG_RUNTIME_DIR"
-                            printf "export WAYLAND_DISPLAY='%s'\n" "${'$'}wayland_display"
-                            printf "export DBUS_SESSION_BUS_ADDRESS='%s'\n" "${'$'}DBUS_SESSION_BUS_ADDRESS"
-                            for xsock in /tmp/.X11-unix/X*; do
-                                [ -S "${'$'}xsock" ] || continue
-                                printf "export DISPLAY=':%s'\n" "${'$'}{xsock##*X}"
-                                break
-                            done
-                            printf "export QT_QPA_PLATFORM='wayland'\n"
-                            printf "export GDK_BACKEND='wayland,x11'\n"
-                            printf "export MOZ_ENABLE_WAYLAND='1'\n"
-                        } > "${'$'}env_tmp"
-                        chmod 0600 "${'$'}env_tmp"
-                        mv -f "${'$'}env_tmp" "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env"
-                        ready=1
-                        break 2
-                    done
-                    kill -0 "${'$'}kwin_pid" 2>/dev/null || break
-                    sleep 0.1
-                done
-                if [ "${'$'}ready" -ne 1 ]; then
-                    kill "${'$'}kwin_pid" 2>/dev/null || true
-                    wait "${'$'}kwin_pid" 2>/dev/null || true
-                    exit 1
-                fi
-                wait "${'$'}kwin_pid"
-            """.trimIndent()
-
-            val compositorScript = """
-                set -eu
-                export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-${'$'}HOME/.local/run/anland-${'$'}(id -u)}"
-                mkdir -p "${'$'}XDG_RUNTIME_DIR"
-                chmod 0700 "${'$'}XDG_RUNTIME_DIR"
-                rm -f "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env" \
-                      "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env.tmp" \
-                      "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.pid" \
-                      "${'$'}XDG_RUNTIME_DIR"/wayland-*
-                unset DISPLAY
-                export ANLAND_SOCKET="$containerSocket"
-                export ANLAND=1
-                export ANLAND_MULTIWINDOW=1
-                export ANLAND_DRM_DEVICE=/dev/dri/renderD128
-                export MESA_LOADER_DRIVER_OVERRIDE=kgsl
-                export GALLIUM_DRIVER=kgsl
-                export FD_FORCE_KGSL=1
-                export QT_QPA_PLATFORM=wayland
-                export GDK_BACKEND=wayland,x11
-                export MOZ_ENABLE_WAYLAND=1
-                exec dbus-run-session sh -lc ${ContainerCommandBuilder.quote(innerSession)}
-            """.trimIndent()
-
-            val prepareScript = """
-                if command -v droidspaces-wslg-prepare >/dev/null 2>&1; then
-                    droidspaces-wslg-prepare
-                fi
-            """.trimIndent()
-            val cleanupScript = """
-                if command -v droidspaces-wslg-cleanup >/dev/null 2>&1; then
-                    droidspaces-wslg-cleanup
-                fi
-            """.trimIndent()
-            val prepareCommand =
-                "$binary --name=$qName run sh -lc " +
-                    ContainerCommandBuilder.quote(prepareScript)
-            val cleanupCommand =
-                "$binary --name=$qName run sh -lc " +
-                    ContainerCommandBuilder.quote(cleanupScript)
-            Shell.cmd(prepareCommand).exec()
-
-            val runCommand =
-                "$binary --name=$qName --user=$qUser run sh -lc " +
-                    ContainerCommandBuilder.quote(compositorScript)
-            val stopCommand = "$binary --name=$qName anland-session stop $qId"
-            val logPath = "/data/local/tmp/droidspaces-wslg-v2.log"
-            val wrapper =
-                "( $runCommand; $stopCommand; $cleanupCommand ) >" +
-                    ContainerCommandBuilder.quote(logPath) +
-                    " 2>&1 </dev/null &"
-            val started = Shell.cmd(wrapper).exec()
-            if (!started.isSuccess) {
-                Shell.cmd(stopCommand).exec()
-                Shell.cmd(cleanupCommand).exec()
-                val detail = (started.out + started.err).joinToString("\n").trim()
-                return@withContext Result.failure(
-                    IllegalStateException(detail.ifBlank { "Failed to start shared KWin compositor" })
-                )
-            }
-
-            Result.success(AnlandAppSession(id, hostSocket))
-        } catch (t: Throwable) {
-            Result.failure(t)
-        }
-    }
-
-    suspend fun stopSharedSession(containerName: String) = withContext(Dispatchers.IO) {
-        val user = detectDefaultUser(containerName) ?: "root"
-        val binary = Constants.DROIDSPACES_BINARY_PATH
-        val qName = ContainerCommandBuilder.quote(containerName)
-        val qUser = ContainerCommandBuilder.quote(user)
-        val stopScript = """
-            export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-${'$'}HOME/.local/run/anland-${'$'}(id -u)}"
-            pid_file="${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.pid"
-            if [ -s "${'$'}pid_file" ]; then
-                pid="${'$'}(cat "${'$'}pid_file" 2>/dev/null || true)"
-                [ -n "${'$'}pid" ] && kill "${'$'}pid" 2>/dev/null || true
-            fi
-            rm -f "${'$'}XDG_RUNTIME_DIR/droidspaces-wslg-v2.env" "${'$'}pid_file"
-        """.trimIndent()
-        Shell.cmd(
-            "$binary --name=$qName --user=$qUser run sh -lc " +
-                ContainerCommandBuilder.quote(stopScript)
-        ).exec()
-        stopSession(containerName, "wslg-v2")
-        val cleanupScript = """
-            if command -v droidspaces-wslg-cleanup >/dev/null 2>&1; then
-                droidspaces-wslg-cleanup
-            fi
-        """.trimIndent()
-        Shell.cmd(
-            "$binary --name=$qName run sh -lc " +
-                ContainerCommandBuilder.quote(cleanupScript)
-        ).exec()
     }
 
     suspend fun stopSession(containerName: String, sessionId: String) =
@@ -400,10 +173,13 @@ object AnlandAppManager {
     }
 
     private fun sanitizeDesktopExec(raw: String): String {
+        val percentMarker = "__ANLAND_LITERAL_PERCENT__"
         return raw
-            .replace("%%", "__ANLAND_PERCENT__")
-            .replace(Regex("""\s*%[fFuUdDnNickvm]"""), "")
-            .replace("__ANLAND_PERCENT__", "%")
+            .replace("%%", percentMarker)
+            // Freedesktop field codes are arguments, not shell substitutions.
+            // Remove standalone codes without damaging nearby quoted arguments.
+            .replace(Regex("""(^|\s)%[fFuUdDnNickvm](?=\s|$)"""), "$1")
+            .replace(percentMarker, "%")
             .trim()
     }
 }
