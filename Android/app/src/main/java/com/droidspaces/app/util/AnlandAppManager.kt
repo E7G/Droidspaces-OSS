@@ -99,7 +99,10 @@ object AnlandAppManager {
                 export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-${'$'}HOME/.local/run/droidspaces-${'$'}(id -u)}"
                 mkdir -p "${'$'}XDG_RUNTIME_DIR"
                 chmod 0700 "${'$'}XDG_RUNTIME_DIR" 2>/dev/null || true
-                unset DISPLAY
+                # A Linux Apps compositor must not accidentally become nested in
+                # a previous desktop/app session. Device/toolkit overrides are
+                # likewise left to the RootFS compositor wrapper.
+                unset DISPLAY WAYLAND_DISPLAY QT_QPA_PLATFORM LD_PRELOAD
                 export ANLAND_SOCKET="$containerSocket"
                 export ANLAND=1
                 if [ -e /dev/dri/renderD128 ] && [ -z "${'$'}{ANLAND_DRM_DEVICE:-}" ]; then
